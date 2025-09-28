@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}貼文內容{% endblock %}
+
+{% block content %}
+<div class="container mt-1">
+    <!-- 貼文內容 -->
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">{{ post.title }}</h5>
+        </div>
+        <div class="card-body">
+            <p class="mb-2">股票代碼：{{ post.stock_code }}</p>
+            <p>{{ post.content }}</p>
+
+            <div class="d-flex justify-content-between align-items-center">
+            <small class="text-muted">發文者：{{ post.author.username }}｜時間：{{ post.created_at }}</small>
+
+            {% if user_id == post.author.id %}
+            <form method="POST" action="/forum/delete/{{ post.id }}/" style="position: relative; top: -5px;">
+                {% csrf_token %}
+                <button class="btn btn-sm btn-danger">刪除貼文</button>
+            </form>
+            {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- 留言區 -->
+    <div class="card mb-4">
+        <div class="card-header bg-secondary text-white">留言</div>
+        <div class="card-body">
+            {% if comments %}
+                {% for comment in comments %}
+                <div class="border-bottom mb-3 pb-2">
+                    <p>{{ comment.content }}</p>
+
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted">留言者：{{ comment.author.username }}｜時間：{{ comment.created_at }}</small>
+                        {% if user_id and user_id == comment.author.id or user_id == post.author.id %}
+                        <form method="POST" action="/forum/{{ post.id }}/comment/{{ comment.id }}/delete/" style="position: relative; top: -5px;">
+                            {% csrf_token %}
+                            <button class="btn btn-sm btn-outline-danger">刪除留言</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="text-muted">尚無留言。</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 新增留言 -->
+    {% if user_id %}
+    <form method="POST" action="/forum/{{ post.id }}/comment/">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="comment">新增留言</label>
+            <textarea name="content" rows="3" class="form-control" required></textarea>
+        </div>
+        <button class="btn btn-success">送出留言</button>
+    </form>
+    {% else %}
+    <p>請先 <a href="/login">登入</a> 才能留言。</p>
+    {% endif %}
+</div>
+{% endblock %}

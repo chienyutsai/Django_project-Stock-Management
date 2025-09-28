@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}使用者登入{% endblock %}
+{% block content %}
+<div class="container mt-5" style="max-width: 500px;">
+    <h3 class="mb-4">使用者登入</h3>
+
+    <!-- 錯誤訊息 -->
+    {% if error %}
+    <div class="alert alert-danger d-flex justify-content-between align-items-center">
+        <span>{{ error }}</span>
+        <a href="/register" class="btn btn-dark btn-sm ms-3">前往註冊頁</a>
+    </div>
+    {% endif %}
+
+    <!-- 登入表單 -->
+    <form method="POST" action="{% url 'login' %}">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label for="username" class="form-label">使用者名稱</label>
+            <input type="text" name="username" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+            <label for="password" class="form-label">密碼</label>
+            <input type="password" name="password" class="form-control" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary w-100">登入</button>
+    </form>
+</div>
+{% endblock %}

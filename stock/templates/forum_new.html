@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}發表新貼文{% endblock %}
+{% block content %}
+<div class="container mt-3">
+    <h3>發表新貼文</h3>
+
+    <form method="POST">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label class="form-label">貼文標題</label>
+            <input type="text" name="title" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">股票代碼</label>
+            <input type="text" name="stock_code" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">內容</label>
+            <textarea name="content" class="form-control" rows="5" required></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-success">發表貼文</button>
+        <a href="/forum" class="btn btn-secondary">返回列表</a>
+    </form>
+</div>
+{% endblock %}

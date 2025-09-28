@@ -1,0 +1,27 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('hello/', views.hello, name='hello'),
+    path('', views.index, name='index'), 
+    path('login/', views.login_view, name='login'),
+    path('logout/', views.logout_view, name='logout'),
+    path('register/', views.register_view, name='register'),
+    path('profile/', views.profile_view, name='profile'),
+    path('update_profile/', views.update_profile_view, name='update_profile'),
+    path('update_password/', views.update_password_view, name='update_password'),
+    path('delete_account/', views.delete_account_view, name='delete_account'),
+    path('search/', views.search_stock, name='search_stock'),
+    path("stock_detail/<str:stock_code>/", views.stock_detail, name="stock_detail"),
+    path("watchlist/", views.my_watchlist, name="my_watchlist"),
+    path("add_watchlist/", views.add_watchlist, name="add_watchlist"),
+    path("remove_watchlist/", views.remove_watchlist, name="remove_watchlist"),
+    path("buy_stock/", views.buy_stock, name="buy_stock"),
+    path("news/", views.news_list, name="news"),
+    path("forum/", views.forum_list, name="forum_list"),
+    path("forum/new/", views.forum_new, name="forum_new"),
+    path("forum/<int:post_id>/", views.forum_post, name="forum_post"),
+    path("forum/delete/<int:post_id>/", views.forum_delete, name="forum_delete"),
+    path("forum/<int:post_id>/comment/", views.add_comment, name="add_comment"),
+    path("forum/<int:post_id>/comment/<int:comment_id>/delete/", views.comment_delete, name="comment_delete"),
+]

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}使用者註冊{% endblock %}
+{% block content %}
+<div class="container mt-5" style="max-width: 500px;">
+    <h3 class="mb-4">使用者註冊</h3>
+
+    <!-- 錯誤提示 -->
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+
+    <!-- 註冊表單 -->
+    <form name="registerForm" method="POST" action="{% url 'register' %}" onsubmit="return validateForm();">
+        {% csrf_token %}
+        <div class="mb-3">
+            <label class="form-label">使用者名稱</label>
+            <input type="text" name="username" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">密碼</label>
+            <input type="password" name="password" class="form-control" required>
+        </div>
+
+        <div class="mb-3">
+            <label class="form-label">確認密碼</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+        </div>
+
+        <button class="btn btn-success w-100">註冊</button>
+    </form>
+</div>
+
+<!-- 表單驗證 JS -->
+<script>
+function validateForm() {
+    const username = document.forms["registerForm"]["username"].value;
+    const password = document.forms["registerForm"]["password"].value;
+    const confirm = document.forms["registerForm"]["confirm_password"].value;
+
+    const userRegex = /^[a-zA-Z0-9]+$/;
+    if (!userRegex.test(username)) {
+        alert("使用者名稱只能包含英文字母與數字");
+        return false;
+    }
+
+    const passRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
+    if (!passRegex.test(password)) {
+        alert("密碼至少需 8 碼，並包含英文字母與數字");
+        return false;
+    }
+
+    if (password !== confirm) {
+        alert("密碼與確認密碼不一致");
+        return false;
+    }
+
+    return true;
+}
+</script>
+{% endblock %}

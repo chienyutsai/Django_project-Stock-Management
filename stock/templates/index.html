@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}首頁{% endblock %}
+
+{% block content %}
+<!-- 錯誤訊息 -->
+{% if error %}
+<div class="alert alert-danger">{{ error }}</div>
+{% endif %}
+
+<!-- 主畫面：大盤行情 -->
+<div id="main-content">
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">大盤行情</div>
+                <div class="card-body">
+                    <div class="row">
+                        {% for item in market_data %}
+                        <div class="col-md-6 mb-4">
+                            <div class="card shadow-sm">
+                                <div class="card-body">
+                                    <h5 class="card-title">{{ item.name }}</h5>
+                                    <p class="card-text">
+                                        <strong>{{ item.price }}</strong> 元<br>
+                                        <small class="text-muted">資料日期：{{ item.date }}</small>
+                                    </p>
+                                    <!-- Plotly 載入一次即可 -->
+                                    
+                                    {{ item.chart | safe }}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

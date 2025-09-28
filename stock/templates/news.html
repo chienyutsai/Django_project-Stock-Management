@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}新聞列表{% endblock %}
+
+{% block content %}
+<div class="container mt-1">
+    <h3 class="mb-4">新聞列表</h3>
+    {% if news %}
+    <ul class="list-group">
+        {% for item in news %}
+        <li class="list-group-item">
+            <a href="{{ item.url }}" target="_blank">{{ item.title }}</a><br>
+            <small class="text-muted">發布時間：{{ item.date }}</small>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="alert alert-warning">無法取得新聞資料。</div>
+    {% endif %}
+</div>
+{% endblock %}

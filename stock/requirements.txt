@@ -1,0 +1,6 @@
+Django
+python-decouple
+requests
+FinMind
+Plotly
+tqdm
