@@ -1,4 +1,5 @@
 import re
+import feedparser
 from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.models import User
@@ -423,23 +424,46 @@ def buy_stock(request):
 
 def news_list(request):
     api_key = config("GNEWS_API_KEY")
-    url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&q=股票&token={api_key}&max=20&lang=zh"
+    url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&token={api_key}&max=20&lang=zh"
+
+
+    # url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&q=股票&token={api_key}&max=20&lang=zh"
     
     news = []
     seen_titles = set()  # 用標題去重
 
     try:
         response = requests.get(url)
+
+        print("GNEWS STATUS:", response.status_code)
+        print("GNEWS RAW:", response.text)
+
         data = response.json()
-        for item in data.get("articles", []):
-            title = item["title"]
-            if title not in seen_titles:
-                news.append({
-                    "title": title,
-                    "url": item["url"],
-                    "date": item["publishedAt"][:10]
-                })
-                seen_titles.add(title)
+
+        #RSS
+        if not data.get("articles"):  # GNews沒回新聞
+            print("⚠️ GNews 無資料，改用 Google News RSS 備援")
+            feed = feedparser.parse("https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
+            for item in feed.entries[:20]:
+                title = item.title
+                if title not in seen_titles:
+                    news.append({
+                        "title": title,
+                        "url": item.link,
+                        "date": item.published[:10]
+                    })
+                    seen_titles.add(title)
+
+        else:
+            for item in data.get("articles", []):
+                title = item["title"]
+                if title not in seen_titles:
+                    news.append({
+                        "title": title,
+                        "url": item["url"],
+                        "date": item["publishedAt"][:10]
+                    })
+                    seen_titles.add(title)
     except Exception as e:
         print("GNews API error:", e)
 
