@@ -29,7 +29,7 @@ SECRET_KEY = 'django-insecure-306c)z*cib)b!&_e3qni#den$#tv&n(1-nsi22y)f$r!7uawc6
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['django-project-stock-management.onrender.com']
+ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'django-project-stock-management.onrender.com']
 
 
 # Application definition
@@ -124,6 +124,7 @@ TIME_ZONE = 'Asia/Taipei'
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
