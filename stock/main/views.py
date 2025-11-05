@@ -10,7 +10,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.views.decorators.cache import never_cache
 from django.conf import settings
 import requests
-from datetime import datetime, timedelta
+import datetime
 from FinMind.data import DataLoader
 import plotly.graph_objs as go
 from plotly.offline import plot
@@ -427,7 +427,7 @@ def news_list(request):
     feed = feedparser.parse("https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
     
     seen_titles = set()
-    now = datetime.now()
+    now = datetime.datetime.now()
     days_limit = 7  # 只抓最近 7 天的新聞
     
     for item in feed.entries:
