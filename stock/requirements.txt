@@ -5,3 +5,4 @@ FinMind
 Plotly
 tqdm
 gunicorn
+feedparser
