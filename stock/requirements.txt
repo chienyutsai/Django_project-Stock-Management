@@ -4,3 +4,4 @@ requests
 FinMind
 Plotly
 tqdm
+gunicorn
