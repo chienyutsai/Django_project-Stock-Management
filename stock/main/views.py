@@ -10,7 +10,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.views.decorators.cache import never_cache
 from django.conf import settings
 import requests
-import datetime
+from datetime import datetime, timedelta
 from FinMind.data import DataLoader
 import plotly.graph_objs as go
 from plotly.offline import plot
@@ -423,6 +423,45 @@ def buy_stock(request):
 # 新聞
 
 def news_list(request):
+    news = []
+    feed = feedparser.parse("https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
+    
+    seen_titles = set()
+    now = datetime.now()
+    days_limit = 7  # 只抓最近 7 天的新聞
+    
+    for item in feed.entries:
+        # 取得日期
+        date_str = getattr(item, "published", getattr(item, "updated", ""))
+        try:
+            date_obj = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %Z")
+        except Exception:
+            date_obj = now  # 如果沒日期就當今天
+        
+        if (now - date_obj).days > days_limit:
+            continue  # 超過 7 天就跳過
+        
+        # 去重
+        title = item.title
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        
+        # 篩選主題: 標題或描述包含「股票」
+        description = getattr(item, "summary", "")
+        if "股票" not in title and "股票" not in description:
+            continue
+        
+        news.append({
+            "title": title,
+            "url": item.link,
+            "date": date_obj.strftime("%Y-%m-%d")
+        })
+    
+    return render(request, "news.html", {"news": news})
+
+'''
+def news_list(request):
     api_key = config("GNEWS_API_KEY")
     url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&token={api_key}&max=20&lang=zh"
 
@@ -468,7 +507,7 @@ def news_list(request):
         print("GNews API error:", e)
 
     return render(request, "news.html", {"news": news})
-
+'''
 
 # 討論區
 
