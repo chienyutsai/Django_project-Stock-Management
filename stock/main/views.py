@@ -22,6 +22,7 @@ from django.contrib import messages
 from .models import Watchlist, BuyRecord, Post, Comment
 from decimal import Decimal
 from django.utils import timezone
+from .services.metrics_tw import fetch_inputs_finmind_twse, compute_metrics
 from loguru import logger
 
 logger.remove()          # 移除預設的 log handler
@@ -249,11 +250,12 @@ def search_stock(request):
 # 股票細節
 
 def stock_detail(request, stock_code):
+    # print("DEBUG token_len in view:", len(config("FINMIND_TOKEN", default="")))
     api = DataLoader()
-    token = config("FINMIND_TOKEN")
+    token = settings.FINMIND_TOKEN           # ← 統一只從 settings 拿
     api.login_by_token(token)
 
-    # 1) 日線價格（畫圖 & 目前價格）
+    # 1) 取日線（你原本的）
     df = api.taiwan_stock_daily(
         stock_id=stock_code,
         start_date="2025-01-01",
@@ -262,49 +264,38 @@ def stock_detail(request, stock_code):
     if df is None or df.empty:
         return render(request, "search_not_found.html", {"query": stock_code})
 
-    # 2) 名稱
+    current_price = float(df["close"].iloc[-1])
+
+    # 2) 名稱（你原本的）
     info = api.taiwan_stock_info()
     stock_name_arr = info.loc[info["stock_id"] == stock_code, "stock_name"].values
     stock_name = stock_name_arr[0] if len(stock_name_arr) > 0 else stock_code
 
-    # 3) 預設三個欄位為 "--"
-    market_cap = "--"
-    pe_ratio = "--"
-    dividend_yield = "--"
+    # 3) << 新增：抓三個欄位 >>
+    inputs = fetch_inputs_finmind_twse(
+        stock_code,
+        price=current_price,
+        token=token                          # ← 一定要傳進去
+    )
+    metrics = compute_metrics(inputs)
+    # print("DEBUG inputs:", inputs.__dict__)
 
-    # 3a) 嘗試取股息殖利率（有就顯示，沒有就 "--"）
-    try:
-        dividend = api.taiwan_stock_dividend(stock_id=stock_code)
-        if dividend is not None and not dividend.empty:
-            # 兼容不同欄位命名
-            for col in ["CashYield", "DividendYield", "dividend_yield", "cash_yield"]:
-                if col in dividend.columns:
-                    val = dividend[col].dropna()
-                    if not val.empty:
-                        # 轉為 float 後四捨五入一下
-                        dividend_yield = round(float(val.iloc[-1]), 2)
-                    break
-    except Exception as e:
-        # 失敗就保持 "--"
-        print("dividend fetch error:", e)
-
-    # 4) 組合要丟給模板的 stock dict
+    # 4) 組合給模板（把三個欄位塞進去）
     stock = {
         "名稱": stock_name,
         "代碼": stock_code,
-        "目前價格": df["close"].iloc[-1],
-        "市值": market_cap,        # 目前先顯示 "--"
-        "本益比": pe_ratio,        # 目前先顯示 "--"
-        "股息殖利率": dividend_yield
+        "目前價格": current_price,
+        "市值": metrics["市值"],
+        "本益比": metrics["本益比"],
+        "股息殖利率": metrics["股息殖利率"],
     }
 
-    # 5) Plotly 圖
+    # 5) 圖與收藏（你原本的）
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
     fig.update_layout(title=f'{stock_code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
     chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
 
-    # 6) 是否在自選（給按鈕切換用）
     in_watchlist = False
     if request.user.is_authenticated:
         in_watchlist = Watchlist.objects.filter(
