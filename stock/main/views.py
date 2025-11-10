@@ -11,6 +11,7 @@ from django.views.decorators.cache import never_cache
 from django.conf import settings
 import requests
 import datetime
+from datetime import timedelta
 from FinMind.data import DataLoader
 import plotly.graph_objs as go
 from plotly.offline import plot
@@ -22,6 +23,7 @@ from django.contrib import messages
 from .models import Watchlist, BuyRecord, Post, Comment
 from decimal import Decimal
 from django.utils import timezone
+from main.models import StockSnapshot
 from .services.metrics_tw import fetch_inputs_finmind_twse, compute_metrics
 from loguru import logger
 
@@ -248,8 +250,28 @@ def search_stock(request):
     return render(request, "search_not_found.html", {"query": query})
 
 # 股票細節
+CACHE_TTL = timedelta(hours=1)
 
 def stock_detail(request, stock_code):
+    code = str(stock_code)
+
+    snap = (StockSnapshot.objects
+            .filter(code=code)
+            .order_by("-created_at")
+            .first())
+
+    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
+        # 命中快取：直接丟到模板
+        context = {
+            "stock_name": snap.name,
+            "stock_code": code,
+            "current_price": float(snap.price),
+            "market_cap": float(snap.market_cap) if snap.market_cap is not None else None,
+            "pe": float(snap.pe) if snap.pe is not None else None,
+            "yld": float(snap.dividend_yield) if snap.dividend_yield is not None else None,
+        }
+        return render(request, "stock_detail.html", context)
+    
     # print("DEBUG token_len in view:", len(config("FINMIND_TOKEN", default="")))
     api = DataLoader()
     token = settings.FINMIND_TOKEN           # ← 統一只從 settings 拿
@@ -289,7 +311,7 @@ def stock_detail(request, stock_code):
         "本益比": metrics["本益比"],
         "股息殖利率": metrics["股息殖利率"],
     }
-
+    
     # 5) 圖與收藏（你原本的）
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
@@ -301,6 +323,8 @@ def stock_detail(request, stock_code):
         in_watchlist = Watchlist.objects.filter(
             user=request.user, stock_code=stock_code, collected=True
         ).exists()
+
+    StockSnapshot.save_snapshot(stock_code, stock_name, current_price, inputs, metrics)
 
     return render(request, "stock_detail.html", {
         "stock": stock,

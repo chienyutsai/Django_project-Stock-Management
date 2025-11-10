@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 import requests
 import time, json, pathlib
+from main.models import StockSnapshot
+from django.utils import timezone
 
 DEBUG_SHARES = False
 def _dbg(*a):
@@ -291,7 +293,7 @@ def _twse_market_cap_to_shares_from_mi_index(stock_code: str, price: Optional[fl
 # 快取
 
 CACHE_FILE = pathlib.Path("/tmp/mops_basic_cache.json")
-CACHE_TTL  = 60 * 60 * 12   # 快取 12 小時
+CACHE_TTL  = 60 * 60 * 1   # 快取 12 小時
 
 def _read_cache():
     try:
@@ -312,10 +314,13 @@ def _write_cache(obj):
 
 # --- MOPS 開放資料：公司基本資料（CSV，不需 token） -----------------
 def _mops_shares_from_csv(stock_code: str) -> Optional[int]:
+    # 1) 先試快取（整份表或「代號→股數」小 dict 都可以）
     cache = _read_cache()
-    if cache and stock_code in cache:
-        _dbg("[MOPS] from cache")
-        return cache[stock_code]
+    if cache and stock_code in cache.get("shares_by_code", {}):
+        shares = cache["shares_by_code"][stock_code]
+        _dbg(f"[CACHE] use {stock_code} -> shares={shares}")
+        return int(shares)
+    
     """
     從 MOPS/TWSE 開放資料 CSV 取得「普通股已發行股數」。
     - 支援 UTF-8 / UTF-8-SIG / Big5
@@ -422,10 +427,22 @@ def _mops_shares_from_csv(stock_code: str) -> Optional[int]:
                         if v and v > 0:
                             shares = int(round(v / 10.0))
                             if shares > 0:
-                                _dbg(f"[{tag}] shares from capital={shares}")
-                                cache = _read_cache() or {}
-                                cache[stock_code] = shares
-                                _write_cache(cache)           
+                                _dbg(f"[{tag}] shares from capital = {shares}")
+
+                                # 讀快取（可能不存在）
+                                cache = _read_cache() or {"shares_by_code": {}}
+
+                                # 確保結構存在
+                                if "shares_by_code" not in cache or not isinstance(cache["shares_by_code"], dict):
+                                    cache["shares_by_code"] = {}
+
+                                # 更新 / 新增
+                                cache["shares_by_code"][stock_code] = shares
+                                cache["ts"] = time.time()
+
+                                # 寫回快取
+                                _write_cache(cache)
+
                                 return shares
 
             if first_row:
@@ -539,3 +556,15 @@ def compute_metrics(inputs: Inputs) -> Dict[str, str]:
         "本益比": f"{pe:.2f}" if pe is not None else "--",
         "股息殖利率": f"{dy:.2f}%" if dy is not None else "--",
     }
+
+
+def save_snapshot(code, name, price, inputs, metrics):
+    snap, _ = StockSnapshot.objects.get_or_create(code=code)
+    snap.name = name
+    snap.price = price
+    snap.shares = inputs.shares_outstanding
+    snap.market_cap = metrics.market_cap
+    snap.pe = metrics.pe
+    snap.yld = metrics.yield_pct
+    snap.as_of = timezone.now()
+    snap.save()
