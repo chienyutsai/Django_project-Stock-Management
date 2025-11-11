@@ -6,3 +6,7 @@ Plotly
 tqdm
 gunicorn
 feedparser
+opencc-python-reimplemented
+torch
+transformers
+jieba

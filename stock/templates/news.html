@@ -4,12 +4,49 @@
 {% block content %}
 <div class="container mt-1">
     <h3 class="mb-4">新聞列表</h3>
+
+    <form class="row g-2 mb-3" method="get">
+        <div class="col-auto">
+            <label class="form-label mb-0">期間(天)</label>
+            <input type="number" class="form-control" name="days" value="{{ days|default:7 }}" min="1" max="30">
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">情緒</label>
+            <select class="form-select" name="sentiment">
+            <option value="" {% if not current_sentiment %}selected{% endif %}>全部</option>
+            <option value="positive" {% if current_sentiment == 'positive' %}selected{% endif %}>正向</option>
+            <option value="neutral"  {% if current_sentiment == 'neutral'  %}selected{% endif %}>中性</option>
+            <option value="negative" {% if current_sentiment == 'negative' %}selected{% endif %}>負向</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">排序</label>
+            <select class="form-select" name="sort">
+            <option value="date"  {% if sort == 'date'  %}selected{% endif %}>日期</option>
+            <option value="score" {% if sort == 'score' %}selected{% endif %}>信心分數</option>
+            </select>
+        </div>
+        <div class="col-auto align-self-end">
+            <button class="btn btn-primary">套用</button>
+        </div>
+    </form>
+
+    
     {% if news %}
     <ul class="list-group">
         {% for item in news %}
         <li class="list-group-item">
             <a href="{{ item.url }}" target="_blank">{{ item.title }}</a><br>
             <small class="text-muted">發布時間：{{ item.date }}</small>
+            <span>
+                {% if item.sentiment == 'positive' %}
+                    <span class="badge rounded-pill text-bg-success">正向 {{ item.sentiment_score }}</span>
+                {% elif item.sentiment == 'negative' %}
+                    <span class="badge rounded-pill text-bg-danger">負向 {{ item.sentiment_score }}</span>
+                {% else %}
+                    <span class="badge rounded-pill text-bg-secondary">中性 {{ item.sentiment_score }}</span>
+                {% endif %}
+            </span>
         </li>
         {% endfor %}
     </ul>

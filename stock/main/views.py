@@ -24,12 +24,19 @@ from .models import Watchlist, BuyRecord, Post, Comment
 from decimal import Decimal
 from django.utils import timezone
 from main.models import StockSnapshot
+import datetime as dt
+import difflib
+import unicodedata
+from urllib.parse import urlparse, urlunparse
+from .services.sentiment import simple_score
 from .services.metrics_tw import fetch_inputs_finmind_twse, compute_metrics
 from loguru import logger
 
 logger.remove()          # 移除預設的 log handler
 logger.add("finmind.log", level="ERROR")  # 只寫 ERROR 到檔案，不印出來
-    
+
+now = dt.datetime.now()
+
 def hello(request):
     return HttpResponse("Hello Django from main app!")
 
@@ -437,43 +444,104 @@ def buy_stock(request):
 
 # 新聞
 
+# 抽主體（保留顯示用）
+def _canonical_title(title: str) -> str:
+    t = (title or "").strip()
+    # 砍掉最後一段「- 來源」或「— 來源」；支援 -, –, —
+    t = re.split(r"\s*[-–—]\s*[^-–—｜|]{1,40}$", t)[0]
+    # 砍掉管線分隔後的欄位（全形｜或半形|）
+    t = re.split(r"\s*[|｜]\s*.*$", t)[0]
+    # 砍掉尾端括號內容（作者/即時等）
+    t = re.sub(r"(（.*?）|\(.*?\))\s*$", "", t)
+    return t.strip()
+
+# 轉成穩定的去重 key（不拿來顯示）
+def _title_key(title: str) -> str:
+    t = _canonical_title(title)
+    # 移除所有非中文字母數字，並轉小寫（避免「、：！？」等差異）
+    t = re.sub(r"[^\w\u4e00-\u9fff]+", "", t, flags=re.UNICODE).lower()
+    return t
+
+def _canonical_url(u: str) -> str:
+    try:
+        pr = urlparse(u or "")
+        # 去掉查詢參數與 fragment，避免 utm 導致重複
+        return urlunparse((pr.scheme, pr.netloc.lower(), pr.path, "", "", ""))
+    except Exception:
+        return u or ""
+
 def news_list(request):
+    feed = feedparser.parse(
+        "https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    )
+
     news = []
-    feed = feedparser.parse("https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
-    
-    seen_titles = set()
-    now = datetime.datetime.now()
-    days_limit = 7  # 只抓最近 7 天的新聞
-    
+    seen_keys = set()                   # ← 用 key 去重
+    now = dt.datetime.now()
+    days_limit = int(request.GET.get("days", 7))
+    wanted_sentiment = request.GET.get("sentiment")
+    sort_key = request.GET.get("sort", "rank")
+
     for item in feed.entries:
-        # 取得日期
-        date_str = getattr(item, "published", getattr(item, "updated", ""))
+        # ---- 日期 ----
+        date_str = getattr(item, "published", getattr(item, "updated", "")) or ""
         try:
-            date_obj = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %Z")
+            date_obj = dt.datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %Z")
         except Exception:
-            date_obj = now  # 如果沒日期就當今天
-        
+            date_obj = now
         if (now - date_obj).days > days_limit:
-            continue  # 超過 7 天就跳過
-        
-        # 去重
-        title = item.title
-        if title in seen_titles:
             continue
-        seen_titles.add(title)
-        
-        # 篩選主題: 標題或描述包含「股票」
-        description = getattr(item, "summary", "")
-        if "股票" not in title and "股票" not in description:
+
+        # ---- 標題 / 連結 ----
+        title_raw = (getattr(item, "title", "") or "").strip()
+        if not title_raw:
             continue
-        
+        key = _title_key(title_raw)     # ← 生成穩定 key
+        if key in seen_keys:            # ← 去重（同文不同站會被擋掉）
+            continue
+        seen_keys.add(key)
+
+        title = _canonical_title(title_raw)               # 顯示用主體
+        url = _canonical_url(getattr(item, "link", ""))   # 乾淨連結
+        description = getattr(item, "summary", "") or ""
+
+        # 主題過濾（保留你的條件）
+        if "股票" not in title_raw and "股票" not in description:
+            continue
+
+        # ---- 情緒 ----
+        label, score = simple_score(title_raw + " " + description)
+        if wanted_sentiment and label != wanted_sentiment:
+            continue
+
         news.append({
-            "title": title,
-            "url": item.link,
-            "date": date_obj.strftime("%Y-%m-%d")
+            "title": title,                       # 顯示主體，不帶站名
+            "url": url,
+            "date": date_obj.strftime("%Y-%m-%d"),
+            "sentiment": label,
+            "sentiment_score": f"{score:.2f}",
         })
-    
-    return render(request, "news.html", {"news": news})
+
+    # ---- 排序：rank(正>中>負) → score desc → date desc ----
+    if sort_key == "score":
+        news.sort(key=lambda x: float(x["sentiment_score"]), reverse=True)
+    elif sort_key == "date":
+        news.sort(key=lambda x: x["date"], reverse=True)
+    else:  # rank
+        rank = {"positive": 2, "neutral": 1, "negative": 0}
+        news.sort(key=lambda x: (rank.get(x["sentiment"], 1),
+                                 float(x["sentiment_score"]),
+                                 x["date"]),
+                  reverse=True)
+
+    return render(request, "news.html", {
+        "news": news,
+        "days": days_limit,
+        "current_sentiment": wanted_sentiment or "",
+        "sort": sort_key,
+    })
+
+
 
 '''
 def news_list(request):
