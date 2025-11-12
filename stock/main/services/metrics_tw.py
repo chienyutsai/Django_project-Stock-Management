@@ -455,7 +455,101 @@ def _mops_shares_from_csv(stock_code: str) -> Optional[int]:
 
     _dbg("[MOPS/TWSE-OD] code not found after all sources:", stock_code)
     return None
-    
+
+
+# 取得公司名稱（MOPS CSV，不需 token）
+def mops_company_name(stock_code: str) -> Optional[str]:
+    import io, csv
+    import requests, re
+    def _normalize(s: str) -> str:
+        s = str(s or "").strip()
+        s = s.translate(dict((ord(c), ord('0')+i) for i,c in enumerate("０１２３４５６７８９")))
+        return re.sub(r"\D+","", s)
+
+    want = _normalize(stock_code)
+    urls = [
+        "https://mopsfin.twse.com.tw/opendata/t187ap03_L.csv",
+        "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+    ]
+    headers = {
+        "User-Agent":"Mozilla/5.0",
+        "Accept":"text/csv,*/*",
+        "Referer":"https://mops.twse.com.tw/",
+    }
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=12)
+            if not r.ok: 
+                continue
+            raw = r.content
+            text = None
+            for enc in ("utf-8-sig","utf-8","big5","cp950"):
+                try:
+                    text = raw.decode(enc); break
+                except Exception:
+                    pass
+            if not text: 
+                continue
+            f = io.StringIO(text)
+            reader = csv.DictReader(f)
+            for row in reader:
+                code = _normalize(row.get("公司代號") or row.get("\ufeff公司代號"))
+                if code == want:
+                    # 常見欄位：公司名稱(中文)
+                    for k in ("公司名稱(中文)","公司名稱","公司名稱(含股票代號)"):
+                        if k in row and str(row[k]).strip():
+                            return str(row[k]).strip()
+        except Exception:
+            continue
+    return None
+
+# 取得收盤/近價（TWSE MI_INDEX，不需 token）
+def twse_close_price(stock_code: str) -> Optional[float]:
+    import datetime as dt, requests
+    url = "https://www.twse.com.tw/exchangeReport/MI_INDEX"
+    headers = {
+        "User-Agent":"Mozilla/5.0",
+        "Accept":"application/json,text/plain,*/*",
+        "Referer":"https://www.twse.com.tw/",
+        "X-Requested-With":"XMLHttpRequest",
+    }
+    for i in range(0, 10):  # 回溯 10 天找到最近交易日
+        d = (dt.date.today() - dt.timedelta(days=i)).strftime("%Y%m%d")
+        try:
+            r = requests.get(url, params={"response":"json","date":d,"type":"ALLBUT0999"},
+                             headers=headers, timeout=12)
+            if not r.ok: 
+                continue
+            j = r.json()
+            # 找含「證券代號」「收盤價」的表
+            for k, rows in j.items():
+                if not k.startswith("data") or not isinstance(rows, list):
+                    continue
+                fields = j.get(f"fields{k[4:]}") or []
+                try:
+                    code_idx = next(i for i,v in enumerate(fields) if "代號" in v)
+                    close_idx = next(i for i,v in enumerate(fields) if "收盤" in v)
+                except StopIteration:
+                    continue
+                for row in rows:
+                    if str(row[code_idx]).strip() == str(stock_code):
+                        val = str(row[close_idx]).replace(",","").strip()
+                        if val and val not in ("--","-"):
+                            try:
+                                return float(val)
+                            except Exception:
+                                pass
+        except Exception:
+            continue
+    return None
+
+# 包裝：穩定取得基本資料（名稱、價格）
+def get_basic_name_price(stock_code: str) -> tuple[Optional[str], Optional[float]]:
+    name = mops_company_name(stock_code)
+    price = twse_close_price(stock_code)
+    return name, price
+
+
 
 def _fm_shares_outstanding(stock_code: str, token: Optional[str], price: Optional[float] = None) -> Optional[int]:
     # A) 先走 MOPS/TWSE OpenData（CSV）

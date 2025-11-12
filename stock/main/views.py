@@ -29,7 +29,7 @@ import difflib
 import unicodedata
 from urllib.parse import urlparse, urlunparse
 from .services.sentiment import simple_score
-from .services.metrics_tw import fetch_inputs_finmind_twse, compute_metrics
+from .services.metrics_tw import get_basic_name_price, fetch_inputs_finmind_twse, compute_metrics
 from loguru import logger
 
 logger.remove()          # 移除預設的 log handler
@@ -294,9 +294,10 @@ def get_current_price_now(stock_code: str) -> float:
 
     return price
 
-
 def stock_detail(request, stock_code):
     code = str(stock_code)
+
+    stock_name, current_price = get_basic_name_price(stock_code)
 
     snap = (StockSnapshot.objects
             .filter(code=code)
@@ -375,12 +376,12 @@ def stock_detail(request, stock_code):
             chart = None
 
     stock = {
-        "名稱": stock_name,
+        "名稱": stock_name or "",
         "代碼": code,
         "目前價格": current_price,
         "市值": market_cap,
-        "本益比": pe,
-        "股息殖利率": yld,
+        "本益比": pe or inputs._pe_from_twse,
+        "股息殖利率": yld or inputs._yld_from_twse,
     }
 
     in_watchlist = False
