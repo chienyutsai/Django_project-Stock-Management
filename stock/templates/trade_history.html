@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ stock_name }}（{{ stock_code }}）的交易紀錄{% endblock %}
+
+{% block content %}
+<div class="container mt-3">
+
+  <div class="card shadow-sm">
+
+    <!-- 黑色標題列 -->
+    <div class="card-header bg-dark text-white">
+      <h5 class="mb-0">{{ stock_name }}（{{ stock_code }}）</h5>
+    </div>
+
+    <!-- 當前價 + 表格一起放在 card-body -->
+    <div class="card-body p-3">
+
+      <!-- 當前價 -->
+      <div class="d-flex align-items-baseline mb-3">
+        <span class="fw-semibold text-muted me-2">當前價：</span>
+        {% if current_price %}
+          <span class="fs-5 fw-bold text-dark">{{ current_price }}</span><span class="ms-1">元</span>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </div>
+
+      <!-- 交易表格 -->
+      <table class="table table-bordered mb-0">
+        <thead class="table-light">
+          <tr><th>時間</th><th>動作</th><th>股數</th><th>價格</th><th>餘額</th></tr>
+        </thead>
+        <tbody>
+          {% for r in records %}
+            <tr>
+              <td>{{ r.created_at|date:"Y-m-d H:i" }}</td>
+              <td>{% if r.action == "BUY" %}買入{% else %}賣出{% endif %}</td>
+              <td>{{ r.quantity }}</td>
+              <td>{{ r.price }}</td>
+              <td>{{ r.balance }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-center text-muted">尚無紀錄</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+        <!-- 返回按鈕區 -->
+        <div class="mt-3 d-flex gap-2">
+        <!-- 返回自選股 -->
+        <a href="{% url 'my_watchlist' %}" class="btn btn-outline-secondary btn-sm">
+            返回自選股
+        </a>
+
+        <!-- 返回股票細節 -->
+        <a href="{% url 'stock_detail' stock_code=stock_code %}" class="btn btn-outline-primary btn-sm">
+            返回股票細節
+        </a>
+        </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

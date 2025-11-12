@@ -1,7 +1,19 @@
 {% extends "base.html" %}
+
 {% block title %}我的自選股清單{% endblock %}
+
 {% block content %}
+
 <div class="container mt-1">
+
+    {% if messages %}
+    <div class="mt-2">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
     <h3 class="mb-4">我的自選股清單</h3>
 
     {% if watchlist %}
@@ -16,46 +28,84 @@
         <tbody>
             {% for item in watchlist %}
             <tr>
-                <td>{{ item.stock_code }}</td>
+                <!--<td>{{ item.stock_code }}</td>
+                <a href="{% url 'stock_detail' stock_code=item.stock_code %}" 
+                    class="text-decoration-none fw-semibold text-dark">
+                    {{ item.stock_code }}
+                </a>
+                -->
+
+                <td class="text-center align-middle">
+                    <div class="d-flex flex-column align-items-center">
+                        <span class="fw-bold">{{ item.stock_code }}</span>
+                        <a href="{% url 'stock_detail' stock_code=item.stock_code %}" 
+                        class="btn btn-outline-secondary btn-sm mt-1">
+                        詳情
+                        </a>
+                    </div>
+                </td>
+
+
                 <td>
                     {% if item.quantity %}
                         已購買（{{ item.quantity }} 股 ≈ {{ item.lots|floatformat:1 }} 張）<br>
-                        平均 {{ item.average_price }} 元/股<br>
+                        平均 {{ item.average_price|default:"-" }} 元/股<br>
                         <span class="text-success">目前價格：{{ item.current_price|default:"查詢失敗" }} 元</span><br>
                     {% endif %}
                     {% if item.collected %}
                         <span class="badge bg-primary">已收藏</span>
+                        <a class="btn btn-sm btn-outline-secondary ms-1"
+                           href="{% url 'trade_history' item.stock_code %}">交易紀錄</a>
+                        {# 若暫時沒有命名路由，可用 /watchlist/{{ item.stock_code }}/history/ #}
                     {% endif %}
                 </td>
 
                 <td>
-                    <!-- 收藏按鈕 -->
+                    <!-- 收藏/移除 -->
                     {% if not item.collected %}
                     <form method="POST" action="/add_watchlist/" class="d-inline">
                         {% csrf_token %}
                         <input type="hidden" name="stock_code" value="{{ item.stock_code }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
                         <button class="btn btn-sm btn-outline-primary">加入收藏</button>
                     </form>
                     {% else %}
                     <form method="POST" action="/remove_watchlist/" class="d-inline">
                         {% csrf_token %}
                         <input type="hidden" name="stock_code" value="{{ item.stock_code }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
                         <button class="btn btn-sm btn-outline-danger">移除收藏</button>
                     </form>
                     {% endif %}
 
-                    <!-- 購買按鈕 -->
+                    <!-- 買入（自動帶價） -->
                     <form method="POST" action="/buy_stock/" class="mt-2">
                         {% csrf_token %}
                         <input type="hidden" name="stock_code" value="{{ item.stock_code }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
                         <div class="input-group input-group-sm mb-2">
                             <input type="number" name="amount" min="1" class="form-control" placeholder="數量" required style="flex: 2; min-width: 100px;">
-                            <select name="unit" class="form-select text-center" style="width: 50px;">
+                            <select name="unit" class="form-select text-center" style="width: 60px;">
                                 <option value="shares">股</option>
                                 <option value="lots">張</option>
                             </select>
-                            <input type="number" name="price" min="0.01" step="0.01" class="form-control" placeholder="每股價格" required style="flex: 2; min-width: 100px;">
                             <button class="btn btn-success">購買</button>
+                        </div>
+                        <div class="form-text">價格將以目前市場價自動帶入</div>
+                    </form>
+
+                    <!-- 賣出（自動帶價） -->
+                    <form method="POST" action="/sell_stock/">
+                        {% csrf_token %}
+                        <input type="hidden" name="stock_code" value="{{ item.stock_code }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <div class="input-group input-group-sm">
+                            <input type="number" name="amount" min="1" class="form-control" placeholder="數量" required style="flex: 2; min-width: 100px;">
+                            <select name="unit" class="form-select text-center" style="width: 60px;">
+                                <option value="shares">股</option>
+                                <option value="lots">張</option>
+                            </select>
+                            <button class="btn btn-outline-danger">賣出</button>
                         </div>
                     </form>
                 </td>

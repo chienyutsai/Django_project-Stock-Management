@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.contrib.auth.models import User
 
 class Watchlist(models.Model):
@@ -15,9 +16,18 @@ class Watchlist(models.Model):
 class BuyRecord(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     stock_code = models.CharField(max_length=10, null=True, blank=True)
-    quantity = models.PositiveIntegerField()
+    #quantity = models.PositiveIntegerField()
+    quantity = models.IntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            # 允許正/負，僅禁止 0
+            models.CheckConstraint(
+                check=~Q(quantity=0), name="buyrecord_quantity_nonzero"
+            ),
+        ]
 
     def __str__(self):
         return f"{self.user.username} 買 {self.stock_code} {self.quantity} 股"

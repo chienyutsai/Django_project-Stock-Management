@@ -259,6 +259,42 @@ def search_stock(request):
 # 股票細節
 CACHE_TTL = timedelta(hours=1)
 
+def get_current_price_now(stock_code: str) -> float:
+    code = str(stock_code)
+    snap = (StockSnapshot.objects
+            .filter(code=code)
+            .order_by("-created_at")
+            .first())
+    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
+        return float(snap.price)
+
+    api = DataLoader()
+    token = settings.FINMIND_TOKEN
+    api.login_by_token(token)
+
+    df = api.taiwan_stock_daily(
+        stock_id=code,
+        start_date=(datetime.date.today() - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+        end_date=str(datetime.date.today())
+    )
+    if df is None or df.empty:
+        raise Http404("抓不到當前股價")
+
+    price = float(df["close"].iloc[-1])
+
+    # 取得中文名稱（若要）
+    info = api.taiwan_stock_info()
+    name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
+    stock_name = name_arr[0] if len(name_arr) else code
+
+    # 也更新一次 snapshot（含你已有的 metrics）
+    inputs = fetch_inputs_finmind_twse(code, price=price, token=token)
+    metrics = compute_metrics(inputs)
+    StockSnapshot.save_snapshot(code, stock_name, price, inputs, metrics)
+
+    return price
+
+
 def stock_detail(request, stock_code):
     code = str(stock_code)
 
@@ -267,77 +303,98 @@ def stock_detail(request, stock_code):
             .order_by("-created_at")
             .first())
 
-    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
-        # 命中快取：直接丟到模板
-        context = {
-            "stock_name": snap.name,
-            "stock_code": code,
-            "current_price": float(snap.price),
-            "market_cap": float(snap.market_cap) if snap.market_cap is not None else None,
-            "pe": float(snap.pe) if snap.pe is not None else None,
-            "yld": float(snap.dividend_yield) if snap.dividend_yield is not None else None,
-        }
-        return render(request, "stock_detail.html", context)
-    
-    # print("DEBUG token_len in view:", len(config("FINMIND_TOKEN", default="")))
     api = DataLoader()
-    token = settings.FINMIND_TOKEN           # ← 統一只從 settings 拿
+    token = settings.FINMIND_TOKEN
     api.login_by_token(token)
 
-    # 1) 取日線（你原本的）
-    df = api.taiwan_stock_daily(
-        stock_id=stock_code,
-        start_date="2025-01-01",
-        end_date=str(datetime.date.today())
-    )
-    if df is None or df.empty:
-        return render(request, "search_not_found.html", {"query": stock_code})
+    need_metrics = False
+    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
+        # 命中快取：先用快取的數值
+        stock_name = snap.name
+        current_price = float(snap.price)
+        market_cap = float(snap.market_cap) if snap.market_cap is not None else None
+        pe = float(snap.pe) if snap.pe is not None else None
+        yld = float(snap.dividend_yield) if snap.dividend_yield is not None else None
 
-    current_price = float(df["close"].iloc[-1])
+        # 若快取缺欄位，就現場補一次並更新 snapshot
+        if market_cap is None or pe is None or yld is None:
+            need_metrics = True
+    else:
+        # 沒快取或過期：抓 2025-01-01 以來日線
+        df = api.taiwan_stock_daily(
+            stock_id=code,
+            start_date="2025-01-01",
+            end_date=str(datetime.date.today())
+        )
+        if df is None or df.empty:
+            return render(request, "search_not_found.html", {"query": code})
 
-    # 2) 名稱（你原本的）
-    info = api.taiwan_stock_info()
-    stock_name_arr = info.loc[info["stock_id"] == stock_code, "stock_name"].values
-    stock_name = stock_name_arr[0] if len(stock_name_arr) > 0 else stock_code
+        current_price = float(df["close"].iloc[-1])
 
-    # 3) << 新增：抓三個欄位 >>
-    inputs = fetch_inputs_finmind_twse(
-        stock_code,
-        price=current_price,
-        token=token                          # ← 一定要傳進去
-    )
-    metrics = compute_metrics(inputs)
-    # print("DEBUG inputs:", inputs.__dict__)
+        info = api.taiwan_stock_info()
+        name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
+        stock_name = name_arr[0] if len(name_arr) else code
 
-    # 4) 組合給模板（把三個欄位塞進去）
+        need_metrics = True
+
+        # 畫近 30 天走勢（可選）
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
+        fig.update_layout(title=f'{code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
+        chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
+
+    # 如果需要，補齊三個指標並寫回 snapshot（同時也確保未來快取完整）
+    if need_metrics:
+        inputs = fetch_inputs_finmind_twse(code, price=current_price, token=token)
+        metrics = compute_metrics(inputs)
+        market_cap = metrics["市值"]
+        pe = metrics["本益比"]
+        yld = metrics["股息殖利率"]
+        StockSnapshot.save_snapshot(code, stock_name, current_price, inputs, {
+            "市值": market_cap, "本益比": pe, "股息殖利率": yld
+        })
+    else:
+        metrics = None  # 只是佔位
+
+    # 如果上面「命中快取」流程沒有畫圖，這裡可選擇補一張近 30 天（也可以不畫）
+    if 'chart' not in locals():
+        try:
+            df30 = api.taiwan_stock_daily(
+                stock_id=code,
+                start_date=(datetime.date.today() - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
+                end_date=str(datetime.date.today())
+            )
+            if df30 is not None and not df30.empty:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=df30['date'], y=df30['close'], mode='lines', name='收盤價'))
+                fig.update_layout(title=f'{code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
+                chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
+            else:
+                chart = None
+        except Exception:
+            chart = None
+
     stock = {
         "名稱": stock_name,
-        "代碼": stock_code,
+        "代碼": code,
         "目前價格": current_price,
-        "市值": metrics["市值"],
-        "本益比": metrics["本益比"],
-        "股息殖利率": metrics["股息殖利率"],
+        "市值": market_cap,
+        "本益比": pe,
+        "股息殖利率": yld,
     }
-    
-    # 5) 圖與收藏（你原本的）
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
-    fig.update_layout(title=f'{stock_code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
-    chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
 
     in_watchlist = False
     if request.user.is_authenticated:
         in_watchlist = Watchlist.objects.filter(
-            user=request.user, stock_code=stock_code, collected=True
+            user=request.user, stock_code=code, collected=True
         ).exists()
-
-    StockSnapshot.save_snapshot(stock_code, stock_name, current_price, inputs, metrics)
 
     return render(request, "stock_detail.html", {
         "stock": stock,
         "chart": chart,
         "in_watchlist": in_watchlist
     })
+
 
 
 # 自選股
@@ -348,20 +405,20 @@ def my_watchlist(request):
     watchlist = Watchlist.objects.filter(user=user)
 
     for item in watchlist:
-        # 計算張數
-        if item.quantity:
-            item.lots = item.quantity / 1000
-        else:
-            item.lots = 0
+        # 張數
+        item.lots = (item.quantity or 0) / 1000
 
-        # 取最後一次購買價格
+        # 即時價（有快取）
+        try:
+            item.current_price = get_current_price_now(item.stock_code)
+        except Exception:
+            item.current_price = None
+
+        # 最後一次交易（顯示用）
         last_record = BuyRecord.objects.filter(
             user=user, stock_code=item.stock_code
         ).order_by('-created_at').first()
-        if last_record:
-            item.current_price = last_record.price
-        else:
-            item.current_price = None
+        item.last_trade_price = last_record.price if last_record else None
 
     return render(request, "watchlist.html", {"watchlist": watchlist})
 
@@ -410,37 +467,130 @@ def buy_stock(request):
         stock_code = request.POST.get("stock_code")
         amount = int(request.POST.get("amount", 0))
         unit = request.POST.get("unit")  # shares 或 lots
-        price = Decimal(request.POST.get("price", "0"))
 
         if unit == "lots":
             amount *= 1000  # 1 張 = 1000 股
 
+        # 自動帶入當前價
+        price = Decimal(str(get_current_price_now(stock_code)))
+
         # 更新或建立 Watchlist
         watch, created = Watchlist.objects.get_or_create(
             user=request.user, stock_code=stock_code,
-            defaults={"quantity": amount, "average_price": price}
+            defaults={"quantity": amount, "average_price": price, "collected": True}
         )
         if not created:
-            # 更新平均成本與數量
             old_avg = Decimal(watch.average_price or 0)
             old_qty = watch.quantity or 0
             new_qty = old_qty + amount
-            new_avg = (old_avg * old_qty + price * amount) / new_qty
+            new_avg = (old_avg * old_qty + price * amount) / new_qty if new_qty else price
 
             watch.average_price = new_avg
             watch.quantity = new_qty
+            watch.collected = True
             watch.save()
 
-        # 建立購買紀錄
+        # 建立交易紀錄（買入 = 正數）
         BuyRecord.objects.create(
             user=request.user,
             stock_code=stock_code,
-            quantity=amount,
+            quantity=amount,     # 正數 = BUY
             price=price
         )
 
-        messages.success(request, f"成功購買 {amount} 股 {stock_code}！")
+        messages.success(request, f"成功以 {price} 買入 {amount} 股 {stock_code}！")
         return redirect(request.POST.get("next") or "/watchlist/")
+
+
+@login_required
+def sell_stock(request):
+    if request.method == "POST":
+        stock_code = request.POST.get("stock_code")
+        amount = int(request.POST.get("amount", 0))
+        unit = request.POST.get("unit")  # shares 或 lots
+        if unit == "lots":
+            amount *= 1000
+
+        # 當前價
+        price = Decimal(str(get_current_price_now(stock_code)))
+
+        # 先確認持股是否足夠
+        watch = Watchlist.objects.filter(user=request.user, stock_code=stock_code).first()
+        held = watch.quantity if watch and watch.quantity else 0
+        if amount > held:
+            messages.error(request, f"賣出失敗：持股不足（目前 {held} 股）")
+            return redirect(request.POST.get("next") or "/watchlist/")
+
+        # 更新持股：平均成本不再變動；若清倉，可選擇把 avg 清空
+        watch.quantity = held - amount
+        if watch.quantity == 0:
+            watch.average_price = None  # 清倉後可清空成本（可依需求調整）
+        watch.save()
+
+        # 建立交易紀錄（賣出 = 負數）
+        BuyRecord.objects.create(
+            user=request.user,
+            stock_code=stock_code,
+            quantity=-amount,    # 負數 = SELL
+            price=price
+        )
+
+        messages.success(request, f"成功以 {price} 賣出 {amount} 股 {stock_code}！")
+        return redirect(request.POST.get("next") or "/watchlist/")
+
+
+@login_required
+def trade_history(request, stock_code):
+    user = request.user
+    code = str(stock_code)
+
+    # 組交易資料（同你現有的）
+    records_qs = (BuyRecord.objects
+                  .filter(user=user, stock_code=code)
+                  .order_by("created_at"))
+    running_qty = 0
+    records = []
+    for r in records_qs:
+        action = "BUY" if r.quantity >= 0 else "SELL"
+        running_qty += r.quantity
+        records.append({
+            "created_at": r.created_at,
+            "action": action,
+            "quantity": abs(r.quantity),
+            "price": r.price,
+            "balance": running_qty
+        })
+
+    # 取得當前價（沿用你的 helper）
+    try:
+        current_price = get_current_price_now(code)
+    except Exception:
+        current_price = None
+
+    # 取得中文名稱
+    snap = (StockSnapshot.objects
+            .filter(code=code)
+            .order_by("-created_at")
+            .first())
+    stock_name = snap.name if snap and snap.name else code
+    if not snap or not snap.name:
+        try:
+            api = DataLoader()
+            api.login_by_token(settings.FINMIND_TOKEN)
+            info = api.taiwan_stock_info()
+            name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
+            if len(name_arr):
+                stock_name = name_arr[0]
+        except Exception:
+            pass
+
+    return render(request, "trade_history.html", {
+        "stock_code": code,
+        "stock_name": stock_name,
+        "records": records,
+        "current_price": current_price
+    })
+
 
 # 新聞
 
