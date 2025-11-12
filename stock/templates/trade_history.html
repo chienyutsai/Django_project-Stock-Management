@@ -29,7 +29,7 @@
         <thead class="table-light">
           <tr><th>時間</th><th>動作</th><th>股數</th><th>價格</th><th>餘額</th></tr>
         </thead>
-        <tbody>
+        <!--<tbody>
           {% for r in records %}
             <tr>
               <td>{{ r.created_at|date:"Y-m-d H:i" }}</td>
@@ -41,6 +41,33 @@
           {% empty %}
             <tr><td colspan="5" class="text-center text-muted">尚無紀錄</td></tr>
           {% endfor %}
+        </tbody>-->
+        <tbody>
+        {% for r in records %}
+            <tr class="{% if r.action == 'BUY' %}table-success{% else %}table-danger{% endif %}">
+            <td>{{ r.created_at|date:"Y-m-d H:i" }}</td>
+
+            <td>
+                {% if r.action == 'BUY' %}
+                <span class="badge rounded-pill text-bg-success">買入</span>
+                {% else %}
+                <span class="badge rounded-pill text-bg-danger">賣出</span>
+                {% endif %}
+            </td>
+
+            <td class="fw-semibold {% if r.action == 'BUY' %}text-success{% else %}text-danger{% endif %}">
+                {% if r.action == 'BUY' %}+{% else %}-{% endif %}{{ r.quantity }}
+            </td>
+
+            <td class="{% if r.action == 'BUY' %}text-success{% else %}text-danger{% endif %}">
+                {{ r.price }}
+            </td>
+
+            <td>{{ r.balance }}</td>
+            </tr>
+        {% empty %}
+            <tr><td colspan="5" class="text-center text-muted">尚無紀錄</td></tr>
+        {% endfor %}
         </tbody>
       </table>
 

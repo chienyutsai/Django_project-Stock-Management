@@ -1,4 +1,5 @@
 import re
+import os
 import feedparser
 from django.http import HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -27,15 +28,38 @@ from main.models import StockSnapshot
 import datetime as dt
 import difflib
 import unicodedata
+from django.db import transaction
+from django.views.decorators.http import require_POST
+from django.shortcuts import redirect
+
 from urllib.parse import urlparse, urlunparse
 from .services.sentiment import simple_score
-from .services.metrics_tw import get_basic_name_price, fetch_inputs_finmind_twse, compute_metrics
+from .services.metrics_tw import Inputs, get_basic_name_price, fetch_inputs_finmind_twse, compute_metrics
 from loguru import logger
 
 logger.remove()          # 移除預設的 log handler
 logger.add("finmind.log", level="ERROR")  # 只寫 ERROR 到檔案，不印出來
 
 now = dt.datetime.now()
+
+
+def _td_price(symbol: str) -> float | None:
+    """Twelve Data 取即時價（免費方案可用），失敗回 None。"""
+    api_key = config("TWELVE_DATA_API_KEY", default="")
+    if not api_key:
+        return None
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/price",
+            params={"symbol": symbol, "apikey": api_key},
+            timeout=10,
+        )
+        j = r.json()
+        # 成功時回 {"price":"..."}；錯誤時會有 {"status":"error", ...}
+        p = j.get("price")
+        return float(p) if p is not None and p != "" else None
+    except Exception:
+        return None
 
 def hello(request):
     return HttpResponse("Hello Django from main app!")
@@ -230,7 +254,7 @@ def get_market_data():
     return market_data
 
 # 搜尋股票
-
+'''
 def search_stock(request):
     query = request.GET.get("query", "").strip()
     if not query:
@@ -255,6 +279,132 @@ def search_stock(request):
 
     # 查不到股票
     return render(request, "search_not_found.html", {"query": query})
+'''
+
+def _fetch_foreign_quote(symbol: str):
+    """
+    回傳 {'symbol': 'AAPL', 'name': 'Apple Inc.', 'price': 191.22} 或 None
+    優先用 quote 取得名稱與收盤價；若沒有 close 就退而求其次嘗試 price。
+    """
+    key = getattr(settings, "TWELVE_DATA_API_KEY", None)
+    if not key:
+        return None
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/quote",
+            params={"symbol": symbol, "apikey": key},
+            timeout=10
+        )
+        j = r.json()
+        if j.get("code") or j.get("status") == "error":
+            return None
+        name = j.get("name") or j.get("symbol") or symbol.upper()
+        price = None
+        for k in ("close", "previous_close", "open", "price"):
+            if j.get(k):
+                try:
+                    price = float(j[k])
+                    break
+                except Exception:
+                    pass
+        # quote 可能沒有 price，就再打一次 price
+        if price is None:
+            r2 = requests.get(
+                "https://api.twelvedata.com/price",
+                params={"symbol": symbol, "apikey": key},
+                timeout=10
+            )
+            j2 = r2.json()
+            if isinstance(j2, dict) and j2.get("price"):
+                price = float(j2["price"])
+        return {"symbol": symbol.upper(), "name": name, "price": price}
+    except Exception:
+        return None
+    
+
+def _foreign_timeseries_chart(symbol: str):
+    """
+    從 Twelve Data 取 30 天 1day K 線，回傳 Plotly HTML（或 None）。
+    """
+    key = getattr(settings, "TWELVE_DATA_API_KEY", None)
+    if not key:
+        return None
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/time_series",
+            params={"symbol": symbol, "interval": "1day", "outputsize": 30, "apikey": key},
+            timeout=12
+        )
+        j = r.json()
+        values = j.get("values")
+        if not isinstance(values, list) or not values:
+            return None
+        df = pd.DataFrame(values)
+        # 轉型與排序
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        for c in ("open", "high", "low", "close"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.sort_values("datetime")
+
+        fig = go.Figure(data=[go.Candlestick(
+            x=df["datetime"],
+            open=df["open"], high=df["high"],
+            low=df["low"], close=df["close"]
+        )])
+        fig.update_layout(title=f"{symbol.upper()} 近 30 天 K 線圖", xaxis_title="日期", yaxis_title="價格")
+        return fig.to_html(include_plotlyjs="cdn", full_html=False)
+    except Exception:
+        return None
+    
+
+def search_stock(request):
+    query = (request.GET.get("query") or "").strip()
+    if not query:
+        return redirect("/")
+
+    # a) 純數字 → 直接當台股代碼
+    if query.isdigit():
+        return redirect(f"/stock_detail/{query}/")
+
+    # b) 中文/關鍵字 → FinMind 對應出 stock_id
+    try:
+        api = DataLoader()
+        api.login_by_token(settings.FINMIND_TOKEN)
+        info = api.taiwan_stock_info()
+        match = info[info["stock_name"].str.contains(query, case=False, na=False)]
+        if not match.empty:
+            code = str(match.iloc[0]["stock_id"])
+            return redirect(f"/stock_detail/{code}/")
+    except Exception:
+        pass
+
+    # c) 其他（英文字母等）→ 當外國代碼交給 stock_detail 判斷
+    return redirect(f"/stock_detail/{query.upper()}/")
+
+def _twelve_symbol_search(q: str):
+    """用 Twelve Data 的 symbol_search 把公司/代碼 → 標準 symbol 與顯示名稱"""
+    key = config("TWELVE_DATA_API_KEY")
+    if not key:
+        print("[12DATA] missing TWELVE_DATA_API_KEY")
+        return None, None
+
+    try:
+        r = requests.get(
+            "https://api.twelvedata.com/symbol_search",
+            params={"symbol": q, "outputsize": 1, "apikey": key},
+            timeout=10
+        )
+        print("[12DATA search]", r.status_code, r.text[:200])
+        j = r.json()
+        data = j.get("data") or []
+        if data:
+            first = data[0]
+            # e.g. {"symbol": "AAPL", "instrument_name": "Apple Inc", "exchange": "NASDAQ"}
+            return first.get("symbol"), first.get("instrument_name") or first.get("name")
+    except Exception as e:
+        print("[12DATA] search error:", e)
+    return None, None
+
 
 # 股票細節
 CACHE_TTL = timedelta(hours=1)
@@ -294,10 +444,275 @@ def get_current_price_now(stock_code: str) -> float:
 
     return price
 
-def stock_detail(request, stock_code):
-    code = str(stock_code)
 
-    stock_name, current_price = get_basic_name_price(stock_code)
+def _to_float(x):
+    try:
+        if x is None or x == "" or x == "--":
+            return None
+        return float(str(x).replace(",", ""))
+    except Exception:
+        return None
+    
+
+
+def fetch_us_overview(symbol: str, av_key: str):
+    """
+    Alpha Vantage OVERVIEW：取公司名稱、市值、本益比、殖利率
+    """
+    try:
+        r = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "OVERVIEW", "symbol": symbol, "apikey": av_key},
+            timeout=12,
+        )
+        j = r.json()
+        return {
+            "name": j.get("Name") or symbol,
+            "market_cap": _to_float(j.get("MarketCapitalization")),  # 美元
+            "pe": _to_float(j.get("PERatio")),
+            "dividend_yield": _to_float(j.get("DividendYield")) * 100 if j.get("DividendYield") else None,  # 轉成 %
+        }
+    except Exception:
+        return {"name": symbol, "market_cap": None, "pe": None, "dividend_yield": None}
+
+def fetch_us_price(symbol: str, av_key: str):
+    """
+    Alpha Vantage GLOBAL_QUOTE：即時/最近成交價
+    """
+    try:
+        r = requests.get(
+            "https://www.alphavantage.co/query",
+            params={"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": av_key},
+            timeout=12,
+        )
+        j = r.json().get("Global Quote", {})
+        return _to_float(j.get("05. price"))
+    except Exception:
+        return None
+
+def fetch_us_series_30(symbol: str, av_key: str):
+    """
+    Alpha Vantage TIME_SERIES_DAILY_ADJUSTED：抓日線，取最近 30 天（compact 回 100 天，這裡切後 30）
+    """
+    try:
+        r = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "TIME_SERIES_DAILY_ADJUSTED",
+                "symbol": symbol,
+                "outputsize": "compact",  # 最多 100 天
+                "apikey": av_key,
+            },
+            timeout=12,
+        )
+        ts = r.json().get("Time Series (Daily)", {}) or {}
+        dates = sorted(ts.keys())[-30:]  # 只要最後 30 筆
+        return [{"date": d, "close": float(ts[d]["4. close"])} for d in dates]
+    except Exception:
+        return []
+
+
+
+
+def fetch_foreign_fundamentals(symbol: str) -> dict:
+    """
+    回傳：
+      {
+        "symbol": "AAPL",
+        "name": "Apple Inc.",
+        "price": 231.12,
+        "market_cap": 3.68e12,          # 元 (USD)
+        "pe": 35.4,
+        "dividend_yield": 0.57,          # 百分比（%）
+        "shares_outstanding": 15900000000
+      }
+    缺資料就放 None；會自動做多來源備援與回推市值。
+    """
+    out = {
+        "symbol": symbol.upper(),
+        "name": None,
+        "price": None,
+        "market_cap": None,
+        "pe": None,
+        "dividend_yield": None,
+        "shares_outstanding": None,
+    }
+
+    # ---------- 第一層：Twelve Data quote ----------
+    td_key = os.getenv("TWELVE_DATA_API_KEY") or getattr(settings, "TWELVE_DATA_API_KEY", "")
+    try:
+        if td_key:
+            r = requests.get(
+                "https://api.twelvedata.com/quote",
+                params={"symbol": symbol, "apikey": td_key},
+                timeout=10,
+            )
+            j = r.json() if r.ok else {}
+            # 有些代碼會在最外層就回傳 error
+            if isinstance(j, dict) and "symbol" in j:
+                out["name"] = j.get("name") or out["name"]
+                out["price"] = _to_float(j.get("close") or j.get("price")) or out["price"]
+                # 有些標的會有 market_cap
+                out["market_cap"] = _to_float(j.get("market_cap")) or out["market_cap"]
+    except Exception:
+        pass
+
+    # ---------- 第二層：Alpha Vantage OVERVIEW ----------
+    av_key = os.getenv("ALPHAVANTAGE_API_KEY") or getattr(settings, "ALPHAVANTAGE_API_KEY", "")
+    try:
+        if av_key:
+            r2 = requests.get(
+                "https://www.alphavantage.co/query",
+                params={"function": "OVERVIEW", "symbol": symbol, "apikey": av_key},
+                timeout=12,
+            )
+            j2 = r2.json() if r2.ok else {}
+            # 成功時會是一個包含多個欄位的 dict；失敗時常是 {"Note": "..."} 或 {}
+            if isinstance(j2, dict) and j2.get("Symbol"):
+                out["name"] = j2.get("Name") or out["name"]
+                # price OVERVIEW 沒有，仍以 TD quote / 走勢 API 為準
+                out["market_cap"] = _to_float(j2.get("MarketCapitalization")) or out["market_cap"]
+                out["pe"] = _to_float(j2.get("PERatio")) or out["pe"]
+                # Alpha Vantage DividendYield 是小數（如 0.0067）；轉成百分比 %
+                dy = _to_float(j2.get("DividendYield"))
+                if dy is not None:
+                    out["dividend_yield"] = dy * 100.0
+                out["shares_outstanding"] = _to_float(j2.get("SharesOutstanding")) or out["shares_outstanding"]
+    except Exception:
+        pass
+
+    # ---------- 資料補齊：以 price 與 shares 回推市值 ----------
+    if out["market_cap"] is None and (out["price"] is not None) and (out["shares_outstanding"] is not None):
+        out["market_cap"] = out["price"] * out["shares_outstanding"]
+
+    return out
+
+
+def _fetch_foreign_timeseries(symbol: str, days: int = 30):
+    """從 Twelve Data 拉取最近 N 天的 1day time series，回傳 (dates, closes)。"""
+    api_key = settings.TWELVE_DATA_API_KEY
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": "1day",
+        "outputsize": days,
+        "apikey": api_key,
+    }
+    r = requests.get(url, params=params, timeout=12)
+    j = r.json()
+    if not isinstance(j, dict) or "values" not in j:
+        return None
+
+    vals = j["values"]                      # 由新到舊
+    vals = sorted(vals, key=lambda x: x["datetime"])  # 轉成由舊到新
+    dates = [v["datetime"][:10] for v in vals]
+    closes = [float(v["close"]) for v in vals]
+    return dates, closes
+
+
+def stock_detail(request, stock_code):
+    code = str(stock_code).strip()
+    
+    # ===== 外國股票（非純數字）→ 統一大寫 =====
+
+    if not code.isdigit():
+        sym = code.upper()
+        f = fetch_foreign_fundamentals(sym)     # ← 這裡
+        if (f.get("price") is None) and (f.get("market_cap") is None) and (f.get("pe") is None):
+            # 幾乎沒拿到任何資料 → 視為查無
+            return render(request, "search_not_found.html", {"query": sym})
+
+        # 走勢圖（30 天）：可繼續用 Twelve Data 的 time_series 畫「折線圖」統一風格
+        chart = None
+        td_key = os.getenv("TWELVE_DATA_API_KEY") or getattr(settings, "TWELVE_DATA_API_KEY", "")
+        try:
+            if td_key:
+                rr = requests.get(
+                    "https://api.twelvedata.com/time_series",
+                    params={"symbol": sym, "interval": "1day", "outputsize": 60, "apikey": td_key, "format": "JSON"},
+                    timeout=12
+                )
+                jj = rr.json() if rr.ok else {}
+                series = jj.get("values") or jj.get("data") or []
+                if series:
+                    # 轉成時間順序（API 回傳通常是新到舊）
+                    xs = [row["datetime"] for row in reversed(series)]
+                    ys = [float(row["close"]) for row in reversed(series)]
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', name='收盤價'))
+                    fig.update_layout(title=f'{sym} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
+                    chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
+        except Exception:
+            chart = None
+
+        # 讓模板使用同一組欄位（跟台股一致）
+        stock = {
+            "名稱": f.get("name") or sym,
+            "代碼": sym,
+            "目前價格": f.get("price") if f.get("price") is not None else "無資料",
+            "市值": f.get("market_cap"),
+            "本益比": f.get("pe"),
+            "股息殖利率": f.get("dividend_yield"),
+        }
+
+        in_watchlist = False
+        if request.user.is_authenticated:
+            in_watchlist = Watchlist.objects.filter(
+                user=request.user, stock_code=sym, collected=True
+            ).exists()
+
+        return render(request, "stock_detail.html", {
+            "stock": stock,
+            "chart": chart,
+            "in_watchlist": in_watchlist,
+        })
+    
+    '''
+    # ===== 外國股票（非純數字）→ 走 Alpha Vantage =====
+    if not code.isdigit():
+        sym = code.upper()
+        av_key = getattr(settings, "ALPHA_VANTAGE_API_KEY", None)  # 你已經設定好 key
+        overview = fetch_us_overview(sym, av_key) if av_key else {"name": sym, "market_cap": None, "pe": None, "dividend_yield": None}
+        price = fetch_us_price(sym, av_key) if av_key else None
+        series = fetch_us_series_30(sym, av_key) if av_key else []
+
+        # 畫「最近 30 天 折線圖」與台股統一
+        chart = None
+        if series:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=[row["date"] for row in series],
+                y=[row["close"] for row in series],
+                mode="lines",
+                name=f"{sym} 收盤價",
+            ))
+            fig.update_layout(title=f"{sym} 近 30 天股價", xaxis_title="日期", yaxis_title="價格")
+            chart = fig.to_html(include_plotlyjs="cdn", full_html=False)
+
+        # 讓表格共用同一個模板結構
+        stock = {
+            "名稱": overview["name"],
+            "代碼": sym,
+            "目前價格": price,
+            "市值": overview["market_cap"],         # 單位：美元（你可以在模板加上顯示單位）
+            "本益比": overview["pe"],
+            "股息殖利率": overview["dividend_yield"], # 百分比數字，模板加上 % 號
+        }
+
+        in_watchlist = False
+        if request.user.is_authenticated:
+            in_watchlist = Watchlist.objects.filter(
+                user=request.user, stock_code=sym, collected=True
+            ).exists()
+
+        return render(request, "stock_detail.html", {
+            "stock": stock,
+            "chart": chart,
+            "in_watchlist": in_watchlist,
+        })'''
+
+    # ===== 台股（純數字）→ 原本流程 =====
+    stock_name, current_price = get_basic_name_price(code)
 
     snap = (StockSnapshot.objects
             .filter(code=code)
@@ -310,18 +725,14 @@ def stock_detail(request, stock_code):
 
     need_metrics = False
     if snap and timezone.now() - snap.created_at <= CACHE_TTL:
-        # 命中快取：先用快取的數值
         stock_name = snap.name
         current_price = float(snap.price)
         market_cap = float(snap.market_cap) if snap.market_cap is not None else None
         pe = float(snap.pe) if snap.pe is not None else None
         yld = float(snap.dividend_yield) if snap.dividend_yield is not None else None
-
-        # 若快取缺欄位，就現場補一次並更新 snapshot
         if market_cap is None or pe is None or yld is None:
             need_metrics = True
     else:
-        # 沒快取或過期：抓 2025-01-01 以來日線
         df = api.taiwan_stock_daily(
             stock_id=code,
             start_date="2025-01-01",
@@ -331,20 +742,16 @@ def stock_detail(request, stock_code):
             return render(request, "search_not_found.html", {"query": code})
 
         current_price = float(df["close"].iloc[-1])
-
         info = api.taiwan_stock_info()
         name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
         stock_name = name_arr[0] if len(name_arr) else code
-
         need_metrics = True
 
-        # 畫近 30 天走勢（可選）
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
         fig.update_layout(title=f'{code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
         chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
 
-    # 如果需要，補齊三個指標並寫回 snapshot（同時也確保未來快取完整）
     if need_metrics:
         inputs = fetch_inputs_finmind_twse(code, price=current_price, token=token)
         metrics = compute_metrics(inputs)
@@ -354,10 +761,7 @@ def stock_detail(request, stock_code):
         StockSnapshot.save_snapshot(code, stock_name, current_price, inputs, {
             "市值": market_cap, "本益比": pe, "股息殖利率": yld
         })
-    else:
-        metrics = None  # 只是佔位
 
-    # 如果上面「命中快取」流程沒有畫圖，這裡可選擇補一張近 30 天（也可以不畫）
     if 'chart' not in locals():
         try:
             df30 = api.taiwan_stock_daily(
@@ -375,13 +779,14 @@ def stock_detail(request, stock_code):
         except Exception:
             chart = None
 
+    # 注意：這裡不要再用 inputs._pe_from_twse（因為命中快取時 inputs 不一定存在）
     stock = {
         "名稱": stock_name or "",
         "代碼": code,
         "目前價格": current_price,
         "市值": market_cap,
-        "本益比": pe or inputs._pe_from_twse,
-        "股息殖利率": yld or inputs._yld_from_twse,
+        "本益比": pe,
+        "股息殖利率": yld,
     }
 
     in_watchlist = False
@@ -395,8 +800,6 @@ def stock_detail(request, stock_code):
         "chart": chart,
         "in_watchlist": in_watchlist
     })
-
-
 
 # 自選股
 
@@ -421,13 +824,19 @@ def my_watchlist(request):
         ).order_by('-created_at').first()
         item.last_trade_price = last_record.price if last_record else None
 
+        # ✅ 新增：只要有紀錄就顯示交易紀錄按鈕
+        item.has_trades = BuyRecord.objects.filter(
+            user=user, stock_code=item.stock_code
+        ).exists()
+        
     return render(request, "watchlist.html", {"watchlist": watchlist})
 
 # 新增自選股
-@login_required
+@login_required(login_url='/login/')
 def add_watchlist(request):
     if request.method == "POST":
-        stock_code = request.POST.get("stock_code")
+        #stock_code = request.POST.get("stock_code")
+        stock_code = request.POST.get("stock_code", "").strip().upper()
         next_url = request.POST.get("next") or "/watchlist/"
 
         # 建立或取得 Watchlist
@@ -448,7 +857,8 @@ def add_watchlist(request):
 @login_required
 def remove_watchlist(request):
     if request.method == "POST":
-        stock_code = request.POST.get("stock_code")
+        #stock_code = request.POST.get("stock_code")
+        stock_code = request.POST.get("stock_code", "").strip().upper()
         watch = Watchlist.objects.filter(user=request.user, stock_code=stock_code).first()
         if watch:
             # 如果該股票沒購買過，直接刪除
@@ -461,8 +871,45 @@ def remove_watchlist(request):
         return redirect(request.POST.get("next") or "/watchlist/")
     return redirect("index")
 
+
+@login_required(login_url="/login/")
+@require_POST
+def delete_stock(request):
+    code = (request.POST.get("code") or "").strip().upper()
+    next_url = request.POST.get("next") or "my_watchlist"
+
+    if not code:
+        messages.error(request, "未提供股票代碼。")
+        return redirect(next_url)
+
+    # 你現有的 model 名稱可能不同，下面用 try/except 保守處理
+    with transaction.atomic():
+        # 1) 刪除收藏（不論是否已收藏，統一清掉）
+        from .models import Watchlist
+        Watchlist.objects.filter(user=request.user, stock_code=code).delete()
+
+        # 2) 刪除該股票的交易紀錄（如果你有這個模型）
+        #    請把 TransactionRecord 換成你專案中交易紀錄的模型名稱
+        try:
+            from .models import TransactionRecord
+            TransactionRecord.objects.filter(user=request.user, stock_code=code).delete()
+        except Exception:
+            pass
+
+        # 3) 若你還有其他和該股票相關的資料（例如持倉/快取快照），在這裡一併清掉
+        # try:
+        #     from .models import Position
+        #     Position.objects.filter(user=request.user, stock_code=code).delete()
+        # except Exception:
+        #     pass
+
+    messages.success(request, f"已刪除 {code}（包含收藏與交易紀錄）。")
+    # 若 next_url 是名稱，Django 會當作 path 名字處理；若是完整 URL 也能回去
+    return redirect(next_url)
+
+
 # 購買股票
-@login_required
+@login_required(login_url='/login/')
 def buy_stock(request):
     if request.method == "POST":
         stock_code = request.POST.get("stock_code")
@@ -503,7 +950,7 @@ def buy_stock(request):
         return redirect(request.POST.get("next") or "/watchlist/")
 
 
-@login_required
+@login_required(login_url='/login/')
 def sell_stock(request):
     if request.method == "POST":
         stock_code = request.POST.get("stock_code")

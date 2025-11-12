@@ -38,7 +38,7 @@
         <form method="POST" action="/remove_watchlist/">
           {% csrf_token %}
           <input type="hidden" name="stock_code" value="{{ stock.代碼 }}">
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <button class="btn btn-outline-danger">移除收藏</button>
         </form>
 
@@ -50,7 +50,7 @@
         <form method="POST" action="/add_watchlist/">
           {% csrf_token %}
           <input type="hidden" name="stock_code" value="{{ stock.代碼 }}">
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <button class="btn btn-outline-primary">加入收藏</button>
         </form>
       {% endif %}
@@ -60,6 +60,8 @@
     <form method="POST" action="/buy_stock/" class="mt-3">
         {% csrf_token %}
         <input type="hidden" name="stock_code" value="{{ stock.代碼 }}">
+        <input type="hidden" name="price"
+               value="{{ current_price|default:stock.目前價格 }}">
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         <div class="input-group input-group-sm mb-2">
             <input type="number" name="amount" min="1" class="form-control w-50" placeholder="數量" required>
@@ -76,6 +78,8 @@
     <form method="POST" action="/sell_stock/" class="mt-2">
         {% csrf_token %}
         <input type="hidden" name="stock_code" value="{{ stock.代碼 }}">
+        <input type="hidden" name="price"
+               value="{{ current_price|default:stock.目前價格 }}">
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         <div class="input-group input-group-sm">
             <input type="number" name="amount" min="1" class="form-control w-50" placeholder="數量" required>
