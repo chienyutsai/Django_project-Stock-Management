@@ -8,7 +8,8 @@ class Watchlist(models.Model):
     collected = models.BooleanField(default=False)  # 是否收藏
     quantity = models.IntegerField(null=True, blank=True)  # 購買股數
     average_price = models.FloatField(null=True, blank=True)  # 平均價格
-    
+    position = models.PositiveIntegerField(default=0, db_index=True)
+
     def __str__(self):
         return f"{self.user.username} - {self.stock_code}"
 

@@ -37,7 +37,12 @@
             color: white !important;
             box-shadow: none !important;
         }
-        
+
+         .drag-handle { cursor: grab; }
+        .drag-handle:active { cursor: grabbing; }
+        .noselect { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
+        #watchlist-body tr.dragging { opacity: .5; }
+
     </style>
 </head>
 <body>
@@ -113,5 +118,86 @@
     {% block content %}{% endblock %}
 </div>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script>
+function getCookie(name) {
+  let v = null; if (document.cookie) {
+    for (const c of document.cookie.split(';')) {
+      const t = c.trim();
+      if (t.startsWith(name + '=')) { v = decodeURIComponent(t.slice(name.length + 1)); break; }
+    }
+  } return v;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const tbody = document.getElementById('watchlist-body');
+  let dragging = null, allowDrag = false;
+
+  // 綁把手：只有按下把手才允許拖
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const handle = tr.querySelector('.drag-handle');
+    if (!handle) return;
+
+    handle.addEventListener('mousedown', () => {
+      allowDrag = true;
+      tr.setAttribute('draggable', 'true');
+    });
+    // 防止把手本身被拖出選字
+    handle.addEventListener('dragstart', e => e.preventDefault());
+
+    tr.addEventListener('dragstart', e => {
+      if (!allowDrag) { e.preventDefault(); return; }
+      dragging = tr;
+      tr.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', tr.dataset.code || '');
+    });
+
+    tr.addEventListener('dragend', () => {
+      tr.removeAttribute('draggable');
+      tr.classList.remove('dragging');
+      dragging = null;
+      allowDrag = false;
+      saveOrder();
+    });
+
+    // 任何地方放開都關閉允許拖
+    tr.addEventListener('mouseup', () => {
+      tr.removeAttribute('draggable');
+      allowDrag = false;
+    });
+  });
+
+  // 放置邏輯
+  tbody.addEventListener('dragover', e => {
+    e.preventDefault();
+    if (!dragging) return;
+    const after = getAfterRow(tbody, e.clientY);
+    if (!after) tbody.appendChild(dragging);
+    else tbody.insertBefore(dragging, after);
+  });
+
+  function getAfterRow(container, y) {
+    const rows = [...container.querySelectorAll('tr:not(.dragging)')];
+    let closest = { offset: Number.NEGATIVE_INFINITY, el: null };
+    for (const row of rows) {
+      const box = row.getBoundingClientRect();
+      const offset = y - box.top - box.height/2;
+      if (offset < 0 && offset > closest.offset) closest = { offset, el: row };
+    }
+    return closest.el;
+  }
+
+  function saveOrder() {
+    const order = [...tbody.querySelectorAll('tr[data-code]')].map(tr => tr.dataset.code);
+    fetch("{% url 'reorder_watchlist' %}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie('csrftoken') },
+      body: JSON.stringify({ order })
+    }).then(r => r.json()).then(d => {
+      if (!d.ok) console.warn('reorder failed:', d.msg);
+    }).catch(console.error);
+  }
+});
+</script>
 </body>
 </html>

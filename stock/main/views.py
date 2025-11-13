@@ -2,6 +2,7 @@ import re
 import os
 import feedparser
 from django.http import HttpResponse
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate, login
@@ -13,6 +14,7 @@ from django.conf import settings
 import requests
 import datetime
 from datetime import timedelta
+from datetime import datetime, timezone as py_tz
 from FinMind.data import DataLoader
 import plotly.graph_objs as go
 from plotly.offline import plot
@@ -28,10 +30,10 @@ from main.models import StockSnapshot
 import datetime as dt
 import difflib
 import unicodedata
+from django.db.models import Max, Q, OuterRef, Subquery, Value, DateTimeField, F
+from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.views.decorators.http import require_POST
-from django.shortcuts import redirect
-
 from urllib.parse import urlparse, urlunparse
 from .services.sentiment import simple_score
 from .services.metrics_tw import Inputs, get_basic_name_price, fetch_inputs_finmind_twse, compute_metrics
@@ -802,11 +804,48 @@ def stock_detail(request, stock_code):
     })
 
 # 自選股
+def norm_code(s: str) -> str:
+    # 全形→半形 + 去空白 + 大寫
+    return unicodedata.normalize('NFKC', (s or '')).strip().upper()
 
 @login_required(login_url='/login/')
 def my_watchlist(request):
     user = request.user
-    watchlist = Watchlist.objects.filter(user=user)
+    sort = request.GET.get("sort", "custom")  # custom / recent / code_asc / code_desc / holdings_desc
+
+    qs = Watchlist.objects.filter(user=user)
+
+    # ---- 決定順序，得到「最終要渲染的 list」：watchlist ----
+    if sort == "recent":
+        last_trade_sq = Subquery(
+            BuyRecord.objects
+                .filter(user=user, stock_code=OuterRef('stock_code'))
+                .order_by('-created_at')
+                .values('created_at')[:1],
+            output_field=DateTimeField()
+        )
+        default_dt = datetime(1900, 1, 1, tzinfo=py_tz.utc)
+        qs = qs.annotate(last_trade=last_trade_sq) \
+               .order_by(Coalesce('last_trade', Value(default_dt)).desc())
+        watchlist = list(qs)
+
+    elif sort in ("code_asc", "code_desc"):
+        items = list(qs)
+
+        def code_key(item):
+            s = norm_code(item.stock_code)
+            return (0, int(s)) if s.isdigit() else (1, s)
+
+        print("DEBUG sort keys:", [(i.stock_code, code_key(i)) for i in items])  # 你剛剛加的那行
+        reverse = (sort == "code_desc")
+        watchlist = sorted(items, key=code_key, reverse=reverse)
+
+    elif sort == "holdings_desc":
+        watchlist = list(qs.order_by("-quantity", "stock_code"))
+
+    else:  # custom（拖曳）
+        watchlist = list(qs.order_by("position", "stock_code"))
+
 
     for item in watchlist:
         # 張數
@@ -828,8 +867,14 @@ def my_watchlist(request):
         item.has_trades = BuyRecord.objects.filter(
             user=user, stock_code=item.stock_code
         ).exists()
-        
-    return render(request, "watchlist.html", {"watchlist": watchlist})
+    
+    print("FINAL ORDER:", [i.stock_code for i in watchlist])
+
+    return render(request, "watchlist.html", {
+        "watchlist": watchlist,
+        "sort": sort,   # 傳給模板，讓選單保持選取
+    })
+
 
 # 新增自選股
 @login_required(login_url='/login/')
@@ -840,10 +885,12 @@ def add_watchlist(request):
         next_url = request.POST.get("next") or "/watchlist/"
 
         # 建立或取得 Watchlist
+        max_pos = Watchlist.objects.filter(user=request.user).aggregate(Max("position"))["position__max"] or 0
         watch, created = Watchlist.objects.get_or_create(
             user=request.user,
             stock_code=stock_code,
-            defaults={"collected": True}
+            defaults={"position": max_pos + 1, "collected": True}
+            #defaults={"collected": True}
         )
 
         if not created:
@@ -871,6 +918,35 @@ def remove_watchlist(request):
         return redirect(request.POST.get("next") or "/watchlist/")
     return redirect("index")
 
+
+@login_required
+@require_POST
+def reorder_watchlist(request):
+    """
+    期待前端送上 JSON: {"order": ["3008", "0050", "2330", ...]}
+    只更新這位使用者的自選股 position
+    """
+    import json
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        order = payload.get("order", [])
+        if not isinstance(order, list):
+            return JsonResponse({"ok": False, "msg": "invalid format"}, status=400)
+
+        qs = Watchlist.objects.filter(user=request.user, stock_code__in=order)
+        wl_map = {w.stock_code: w for w in qs}
+
+        with transaction.atomic():
+            for idx, code in enumerate(order, start=1):
+                w = wl_map.get(code)
+                if w:
+                    w.position = idx
+                    w.save(update_fields=["position"])
+
+        return JsonResponse({"ok": True})
+    except Exception as e:
+        return JsonResponse({"ok": False, "msg": str(e)}, status=400)
+    
 
 @login_required(login_url="/login/")
 @require_POST
