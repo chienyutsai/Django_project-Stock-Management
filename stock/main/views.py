@@ -12,9 +12,9 @@ from django.contrib.auth import update_session_auth_hash
 from django.views.decorators.cache import never_cache
 from django.conf import settings
 import requests
-import datetime
+from datetime import date
 from datetime import timedelta
-from datetime import datetime, timezone as py_tz
+from datetime import timezone as py_tz
 from FinMind.data import DataLoader
 import plotly.graph_objs as go
 from plotly.offline import plot
@@ -193,8 +193,8 @@ def get_market_data():
     token = config("FINMIND_TOKEN")
     api.login_by_token(token)
 
-    today = datetime.date.today()
-    start_date = (today - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+    today = dt.date.today()
+    start_date = (today - dt.timedelta(days=30)).strftime("%Y-%m-%d")
     end_date = today.strftime("%Y-%m-%d")
 
     market_data = []
@@ -426,8 +426,8 @@ def get_current_price_now(stock_code: str) -> float:
 
     df = api.taiwan_stock_daily(
         stock_id=code,
-        start_date=(datetime.date.today() - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-        end_date=str(datetime.date.today())
+        start_date=(dt.date.today() - dt.timedelta(days=30)).strftime("%Y-%m-%d"),
+        end_date=str(dt.date.today())
     )
     if df is None or df.empty:
         raise Http404("抓不到當前股價")
@@ -738,7 +738,7 @@ def stock_detail(request, stock_code):
         df = api.taiwan_stock_daily(
             stock_id=code,
             start_date="2025-01-01",
-            end_date=str(datetime.date.today())
+            end_date=str(dt.date.today())
         )
         if df is None or df.empty:
             return render(request, "search_not_found.html", {"query": code})
@@ -768,8 +768,8 @@ def stock_detail(request, stock_code):
         try:
             df30 = api.taiwan_stock_daily(
                 stock_id=code,
-                start_date=(datetime.date.today() - datetime.timedelta(days=30)).strftime("%Y-%m-%d"),
-                end_date=str(datetime.date.today())
+                start_date=(dt.date.today() - dt.timedelta(days=30)).strftime("%Y-%m-%d"),
+                end_date=str(dt.date.today())
             )
             if df30 is not None and not df30.empty:
                 fig = go.Figure()
@@ -824,7 +824,7 @@ def my_watchlist(request):
                 .values('created_at')[:1],
             output_field=DateTimeField()
         )
-        default_dt = datetime(1900, 1, 1, tzinfo=py_tz.utc)
+        default_dt = dt.datetime(1900, 1, 1, tzinfo=py_tz.utc)
         qs = qs.annotate(last_trade=last_trade_sq) \
                .order_by(Coalesce('last_trade', Value(default_dt)).desc())
         watchlist = list(qs)
