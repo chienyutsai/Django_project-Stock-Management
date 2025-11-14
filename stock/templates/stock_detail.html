@@ -42,11 +42,14 @@
           <button class="btn btn-outline-danger">移除收藏</button>
         </form>
 
-        <!-- 交易紀錄（已收藏才顯示） -->
+        <!-- 交易紀錄（有交易過才顯示） -->
+        {% if has_trades %}
         <a class="btn btn-outline-secondary"
            href="{% url 'trade_history' stock.代碼 %}">交易紀錄</a>
         {# 若暫時沒有命名路由，可用 fallback：/watchlist/{{ stock.代碼 }}/history/ #}
-      {% else %}
+        {% endif %}
+
+        {% else %}
         <form method="POST" action="/add_watchlist/">
           {% csrf_token %}
           <input type="hidden" name="stock_code" value="{{ stock.代碼 }}">

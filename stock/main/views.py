@@ -658,15 +658,22 @@ def stock_detail(request, stock_code):
         }
 
         in_watchlist = False
+        has_trades = False
+
         if request.user.is_authenticated:
             in_watchlist = Watchlist.objects.filter(
                 user=request.user, stock_code=sym, collected=True
+            ).exists()
+
+            has_trades = BuyRecord.objects.filter(
+            user=request.user, stock_code=sym
             ).exists()
 
         return render(request, "stock_detail.html", {
             "stock": stock,
             "chart": chart,
             "in_watchlist": in_watchlist,
+            "has_trades": has_trades,
         })
     
     '''
@@ -792,15 +799,21 @@ def stock_detail(request, stock_code):
     }
 
     in_watchlist = False
+    has_trades   = False
+
     if request.user.is_authenticated:
         in_watchlist = Watchlist.objects.filter(
             user=request.user, stock_code=code, collected=True
+        ).exists()
+        has_trades = BuyRecord.objects.filter(
+        user=request.user, stock_code=code
         ).exists()
 
     return render(request, "stock_detail.html", {
         "stock": stock,
         "chart": chart,
-        "in_watchlist": in_watchlist
+        "in_watchlist": in_watchlist,
+        "has_trades": has_trades,
     })
 
 # 自選股
@@ -836,7 +849,6 @@ def my_watchlist(request):
             s = norm_code(item.stock_code)
             return (0, int(s)) if s.isdigit() else (1, s)
 
-        print("DEBUG sort keys:", [(i.stock_code, code_key(i)) for i in items])  # 你剛剛加的那行
         reverse = (sort == "code_desc")
         watchlist = sorted(items, key=code_key, reverse=reverse)
 
@@ -867,8 +879,6 @@ def my_watchlist(request):
         item.has_trades = BuyRecord.objects.filter(
             user=user, stock_code=item.stock_code
         ).exists()
-    
-    print("FINAL ORDER:", [i.stock_code for i in watchlist])
 
     return render(request, "watchlist.html", {
         "watchlist": watchlist,
@@ -966,11 +976,15 @@ def delete_stock(request):
 
         # 2) 刪除該股票的交易紀錄（如果你有這個模型）
         #    請把 TransactionRecord 換成你專案中交易紀錄的模型名稱
+
+        BuyRecord.objects.filter(user=request.user, stock_code=code).delete()
+        '''
         try:
             from .models import TransactionRecord
             TransactionRecord.objects.filter(user=request.user, stock_code=code).delete()
         except Exception:
             pass
+        '''
 
         # 3) 若你還有其他和該股票相關的資料（例如持倉/快取快照），在這裡一併清掉
         # try:
