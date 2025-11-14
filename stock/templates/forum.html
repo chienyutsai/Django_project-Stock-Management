@@ -14,7 +14,7 @@
                 <div>
                     <h5>{{ post.title }}</h5>
                     <p class="mb-1">股票代碼：{{ post.stock_code }}</p>
-                    <small class="text-muted">作者：{{ post.username }}｜發表於 {{ post.created_at }}</small>
+                    <small class="text-muted">作者：{{ post.author.username }}｜發表於 {{ post.created_at }}</small>
                 </div>
                 <a href="/forum/{{ post.id }}" class="btn btn-sm btn-outline-primary">查看</a>
             </div>

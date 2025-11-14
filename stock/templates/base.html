@@ -107,10 +107,10 @@
         </a>
 
         <a href="{% url 'forum_list' %}"
-        class="nav-btn btn {% if current == 'forum_list' %}active-tab{% endif %}">
+        class="nav-btn btn 
+        {% if current == 'forum_list' or current == 'forum_new' or current == 'forum_post' %}active-tab{% endif %}">
             討論
         </a>
-
     </div>
     {% endwith %}
   

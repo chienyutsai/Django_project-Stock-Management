@@ -59,10 +59,17 @@
             <label for="comment">新增留言</label>
             <textarea name="content" rows="3" class="form-control" required></textarea>
         </div>
-        <button class="btn btn-success">送出留言</button>
+
+        <div class="d-flex justify-content-between">
+            <button class="btn btn-success">送出留言</button>
+            <a href="/forum" class="btn btn-secondary">返回列表</a>
+        </div>
     </form>
     {% else %}
-    <p>請先 <a href="/login">登入</a> 才能留言。</p>
+    <div class="d-flex justify-content-between">
+        <p>請先 <a href="/login">登入</a> 才能留言。</p>
+        <a href="/forum" class="btn btn-secondary">返回列表</a>
+    </div>
     {% endif %}
 </div>
 {% endblock %}
