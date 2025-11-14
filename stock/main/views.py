@@ -89,7 +89,11 @@ def login_view(request):
 def logout_view(request):
     # 這裡可以加登出邏輯
     logout(request)
-    return render(request, 'index.html')
+
+    messages.success(request, "您已成功登出。")
+
+    #return render(request, 'index.html')
+    return redirect("index")
 
 def register_view(request):
     if request.method == 'POST':
@@ -116,6 +120,7 @@ def register_view(request):
         # 建立使用者
         user = User.objects.create_user(username=username, password=password)
         user.save()
+        messages.success(request, "註冊成功！請使用新帳號登入。")
 
         # 成功後跳轉登入頁
         return redirect('login')
@@ -185,6 +190,9 @@ def update_password_view(request):
 def delete_account_view(request):
     if request.method == 'POST':
         request.user.delete()
+
+        messages.success(request, "您已刪除帳號。")
+
         return redirect('index')
     return redirect('profile')
 
