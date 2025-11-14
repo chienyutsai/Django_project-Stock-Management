@@ -46,15 +46,6 @@ def _safe_div(a, b):
         return None
     return a / b
 
-def _fmt_money(n: Optional[float]) -> str:
-    if n is None:
-        return "--"
-    if n >= 1_0000_0000_0000:
-        return f"{n / 1_0000_0000_0000:.2f} 兆"
-    if n >= 1_0000_0000:
-        return f"{n / 1_0000_0000:.2f} 億"
-    return f"{n:,.0f} 元"
-
 
 # --- 1) TWSE rwd 公司基本資料（優先；需要一些 Ajax 標頭，否則常被擋） ---
 def _twse_rwd_company_basic_shares(stock_code: str) -> Optional[int]:
@@ -626,9 +617,80 @@ def fetch_inputs_finmind_twse(stock_code: str, price: Optional[float], token: st
     inputs._yld_from_twse = bwibbu.get("yield")
     return inputs
 
+
+def _fmt_money(v: float | None) -> str | None:
+    """把金額轉成『xxxx.xx 億 / 兆』字串，給前端顯示用。"""
+    if v is None:
+        return None
+
+    v = float(v)
+    if v >= 1_0000_0000_0000:   # >= 1 兆
+        return f"{v / 1_0000_0000_0000:.2f} 兆"
+    if v >= 1_0000_0000:        # >= 1 億
+        return f"{v / 1_0000_0000:.2f} 億"
+    return f"{v:.0f}"           # 小於 1 億就直接顯示整數
+
+
+def _fmt_number(v: float | None) -> str | None:
+    """一般數字（例如本益比），保留兩位小數。"""
+    if v is None:
+        return None
+    return f"{float(v):.2f}"
+
+
+def _fmt_percent(v: float | None) -> str | None:
+    """把比率（例如 0.034）轉成 '3.40%' 字串。"""
+    if v is None:
+        return None
+    return f"{float(v) * 1:.2f}%"
+
+
 # ---------- 計算並格式化成字串，給 template ----------
 
-def compute_metrics(inputs: Inputs) -> Dict[str, str]:
+def compute_metrics(inputs: Inputs) -> dict:
+    """
+    給台股用的指標計算：
+    - 市值
+    - 本益比
+    - 股息殖利率
+    同時回傳『原始數字』以及『顯示用字串』。
+    """
+    
+    price = inputs.price
+    shares = inputs.shares_outstanding
+    eps = inputs.eps_ttm                 # 目前我們先給 None，但保留邏輯
+    cash_div = inputs.cash_dividend_ttm  # 同上
+
+    # 1. 市值（數字）
+    if price is not None and shares:
+        market_cap_raw = float(price) * float(shares)
+    else:
+        market_cap_raw = None
+
+    # 2. 本益比（優先用 TWSE，沒有就用 EPS 算）
+    pe_raw = inputs._pe_from_twse
+    if pe_raw is None and price is not None and eps:
+        pe_raw = float(price) / float(eps)
+
+    # 3. 股息殖利率（優先用 TWSE，沒有就用現金股利 / 股價）
+    yld_raw = inputs._yld_from_twse
+    if yld_raw is None and price is not None and cash_div:
+        yld_raw = float(cash_div) / float(price)   # 例如 0.0342
+
+    return {
+        # --- 原始數值（之後如果要存進 StockSnapshot 用這三個）---
+        "市值_raw": market_cap_raw,
+        "本益比_raw": pe_raw,
+        "股息殖利率_raw": yld_raw,
+
+        # --- 給前端顯示用的字串 ---
+        "市值": _fmt_money(market_cap_raw),
+        "本益比": _fmt_number(pe_raw),
+        "股息殖利率": _fmt_percent(yld_raw),
+    }
+
+
+'''def compute_metrics(inputs: Inputs) -> Dict[str, str]:
     p = inputs.price
     s = inputs.shares_outstanding
 
@@ -650,7 +712,7 @@ def compute_metrics(inputs: Inputs) -> Dict[str, str]:
         "本益比": f"{pe:.2f}" if pe is not None else "--",
         "股息殖利率": f"{dy:.2f}%" if dy is not None else "--",
     }
-
+'''
 
 def save_snapshot(code, name, price, inputs, metrics):
     snap, _ = StockSnapshot.objects.get_or_create(code=code)

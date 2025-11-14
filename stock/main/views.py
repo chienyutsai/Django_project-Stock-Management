@@ -37,6 +37,12 @@ from django.views.decorators.http import require_POST
 from urllib.parse import urlparse, urlunparse
 from .services.sentiment import simple_score
 from .services.metrics_tw import Inputs, get_basic_name_price, fetch_inputs_finmind_twse, compute_metrics
+from .services.metrics_tw import (
+    compute_metrics,
+    _fmt_money,
+    _fmt_number,
+    _fmt_percent,
+)
 from loguru import logger
 
 logger.remove()          # 移除預設的 log handler
@@ -438,6 +444,13 @@ def get_current_price_now(stock_code: str) -> float:
         end_date=str(dt.date.today())
     )
     if df is None or df.empty:
+    # 退回最近一筆 snapshot 價格，不丟 404
+        snap = (StockSnapshot.objects
+                .filter(code=code)
+                .order_by("-created_at")
+                .first())
+        if snap:
+            return float(snap.price)
         raise Http404("抓不到當前股價")
 
     price = float(df["close"].iloc[-1])
@@ -619,10 +632,23 @@ def _fetch_foreign_timeseries(symbol: str, days: int = 30):
     closes = [float(v["close"]) for v in vals]
     return dates, closes
 
+def format_big_number(n):
+    if n is None:
+        return "--"
+    n = float(n)
+    # 先轉成「元」為基準
+    if n >= 1_0000_0000_0000:  # 1 兆 = 10^12
+        return f"{n / 1_0000_0000_0000:.2f} 兆"
+    elif n >= 1_0000_0000:     # 1 億 = 10^8
+        return f"{n / 1_0000_0000:.2f} 億"
+    else:
+        return f"{n:,.0f} 元"
+
 
 def stock_detail(request, stock_code):
     code = str(stock_code).strip()
-    
+
+    ''' 
     # ===== 外國股票（非純數字）→ 統一大寫 =====
 
     if not code.isdigit():
@@ -656,6 +682,36 @@ def stock_detail(request, stock_code):
             chart = None
 
         # 讓模板使用同一組欄位（跟台股一致）
+        # 先從 metrics 拿（如果這次有重算）
+        disp_mkt = None
+        disp_pe = None
+        disp_yld = None
+
+        if metrics is not None:
+            disp_mkt = metrics.get("市值")
+            disp_pe = metrics.get("本益比")
+            disp_yld = metrics.get("股息殖利率")
+
+        # 如果沒有 metrics（例如命中舊的快取），就用數字再套格式化函式
+        if disp_mkt is None:
+            disp_mkt = _fmt_money(market_cap)
+
+        if disp_pe is None:
+            disp_pe = _fmt_number(pe)
+
+        if disp_yld is None:
+            disp_yld = _fmt_percent(yld)
+
+        stock = {
+            "名稱": stock_name or "",
+            "代碼": code,
+            "目前價格": current_price,
+            "市值": disp_mkt,
+            "本益比": disp_pe,
+            "股息殖利率": disp_yld,
+        }
+        
+        #
         stock = {
             "名稱": f.get("name") or sym,
             "代碼": sym,
@@ -664,6 +720,7 @@ def stock_detail(request, stock_code):
             "本益比": f.get("pe"),
             "股息殖利率": f.get("dividend_yield"),
         }
+        #
 
         in_watchlist = False
         has_trades = False
@@ -684,7 +741,7 @@ def stock_detail(request, stock_code):
             "has_trades": has_trades,
         })
     
-    '''
+
     # ===== 外國股票（非純數字）→ 走 Alpha Vantage =====
     if not code.isdigit():
         sym = code.upper()
@@ -726,9 +783,19 @@ def stock_detail(request, stock_code):
             "stock": stock,
             "chart": chart,
             "in_watchlist": in_watchlist,
-        })'''
+        })
+'''
 
     # ===== 台股（純數字）→ 原本流程 =====
+
+    metrics = {
+        "市值": None,
+        "本益比": None,
+        "股息殖利率": None,
+    }
+
+    market_cap = pe = yld = None
+
     stock_name, current_price = get_basic_name_price(code)
 
     snap = (StockSnapshot.objects
@@ -750,11 +817,18 @@ def stock_detail(request, stock_code):
         if market_cap is None or pe is None or yld is None:
             need_metrics = True
     else:
-        df = api.taiwan_stock_daily(
-            stock_id=code,
-            start_date="2025-01-01",
-            end_date=str(dt.date.today())
-        )
+        # ========= 這段是「往回找最近一筆日線資料」的地方 =========
+        base_start = "2025-01-01"
+        today = dt.date.today()
+
+        df = None
+        for offset in range(0, 5):  # 今天、往回 1 天、2 天… 最多找 5 天
+            end_date = (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
+            df = api.taiwan_stock_daily(
+                stock_id=code,
+                start_date=base_start,
+                end_date=end_date,
+            )
         if df is None or df.empty:
             return render(request, "search_not_found.html", {"query": code})
 
@@ -768,7 +842,7 @@ def stock_detail(request, stock_code):
         fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
         fig.update_layout(title=f'{code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
         chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
-
+    '''
     if need_metrics:
         inputs = fetch_inputs_finmind_twse(code, price=current_price, token=token)
         metrics = compute_metrics(inputs)
@@ -777,7 +851,28 @@ def stock_detail(request, stock_code):
         yld = metrics["股息殖利率"]
         StockSnapshot.save_snapshot(code, stock_name, current_price, inputs, {
             "市值": market_cap, "本益比": pe, "股息殖利率": yld
-        })
+        })'''
+
+    if need_metrics:
+        try:
+            inputs = fetch_inputs_finmind_twse(code, price=current_price, token=token)
+            if inputs is not None:
+                metrics = compute_metrics(inputs)
+
+                market_cap = metrics.get("市值")
+                pe        = metrics.get("本益比")
+                yld       = metrics.get("股息殖利率")
+
+                # 有算成功就寫入快取
+                StockSnapshot.save_snapshot(
+                    code, stock_name, current_price, inputs, metrics
+                )
+            else:
+                print(f"[metrics] {code} 沒拿到 inputs，先顯示 --")
+        except Exception as e:
+            # 算指標失敗的情況，例如 2454 在 FinMind 沒資料
+            print(f"[metrics] {code} 計算失敗: {e}")
+            # metrics 保持預設的 None，前端會顯示 "--"
 
     if 'chart' not in locals():
         try:
@@ -797,6 +892,18 @@ def stock_detail(request, stock_code):
             chart = None
 
     # 注意：這裡不要再用 inputs._pe_from_twse（因為命中快取時 inputs 不一定存在）
+    
+    stock = {
+        "名稱": stock_name,
+        "代碼": code,
+        "目前價格": current_price,
+        "市值": metrics["市值"],           # ← 用字串版
+        "本益比": metrics["本益比"],       # ← 用字串版
+        "股息殖利率": metrics["股息殖利率"], # ← 用字串版
+    }
+        
+    
+    '''
     stock = {
         "名稱": stock_name or "",
         "代碼": code,
@@ -804,7 +911,7 @@ def stock_detail(request, stock_code):
         "市值": market_cap,
         "本益比": pe,
         "股息殖利率": yld,
-    }
+    }'''
 
     in_watchlist = False
     has_trades   = False

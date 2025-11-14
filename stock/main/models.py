@@ -1,4 +1,5 @@
 from django.db import models
+from decimal import Decimal, InvalidOperation
 from django.db.models import Q
 from django.contrib.auth.models import User
 
@@ -67,7 +68,40 @@ class StockSnapshot(models.Model):
     dividend_yield = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    # 這是你要呼叫的函式 → save_snapshot(...)
+    @classmethod
+    def _to_decimal(cls, v):
+        """
+        接受：
+          - 數字 (int/float/Decimal)
+          - 純數字字串 "37080000000000"
+          - 帶單位 "37.08 兆" 或 "999.5 億"
+        轉成 Decimal 或 None
+        """
+        if v is None:
+            return None
+
+        # 已經是數字就直接包成 Decimal
+        if isinstance(v, (int, float, Decimal)):
+            return Decimal(str(v))
+
+        s = str(v).strip()
+        if not s:
+            return None
+
+        # 拿掉逗號
+        s = s.replace(",", "")
+
+        multiplier = Decimal("1")
+        if s.endswith("兆"):
+            multiplier = Decimal("1e12")
+            s = s[:-1].strip()
+        elif s.endswith("億"):
+            multiplier = Decimal("1e8")
+            s = s[:-1].strip()
+
+        # 這裡 s 應該只剩數字了
+        return Decimal(s) * multiplier
+
     @classmethod
     def save_snapshot(cls, code, name, price, inputs, metrics):
         try:
@@ -76,10 +110,9 @@ class StockSnapshot(models.Model):
                 name=name,
                 price=price,
                 shares=getattr(inputs, "shares_outstanding", None),
-                market_cap=getattr(metrics, "market_cap", None),
-                pe=getattr(metrics, "pe", None),
-                dividend_yield=getattr(metrics, "dividend_yield", None),
+                market_cap=metrics.get("市值_raw"),
+                pe=metrics.get("本益比_raw"),
+                dividend_yield=metrics.get("股息殖利率_raw"),
             )
         except Exception:
-            # 寫入失敗時不影響前端顯示
             pass
