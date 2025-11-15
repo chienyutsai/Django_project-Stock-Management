@@ -817,13 +817,29 @@ def stock_detail(request, stock_code):
 
     need_metrics = False
     if snap and timezone.now() - snap.created_at <= CACHE_TTL:
+
         stock_name = snap.name
         current_price = float(snap.price)
+
         market_cap = float(snap.market_cap) if snap.market_cap is not None else None
         pe = float(snap.pe) if snap.pe is not None else None
         yld = float(snap.dividend_yield) if snap.dividend_yield is not None else None
+        
+        '''if market_cap is None or pe is None or yld is None:
+            need_metrics = True'''
+        # ★ 這裡把 "metrics" 字串也補起來（給前端用）
+        if market_cap is not None:
+            metrics["市值"] = _fmt_money(market_cap)
+        if pe is not None:
+            metrics["本益比"] = _fmt_number(pe)
+        if yld is not None:
+            metrics["股息殖利率"] = _fmt_percent(yld)
+
+        # 如果還有缺，就標記 need_metrics=True 讓下面再算一次
         if market_cap is None or pe is None or yld is None:
             need_metrics = True
+
+ 
     else:
         # ========= 這段是「往回找最近一筆日線資料」的地方 =========
         '''
