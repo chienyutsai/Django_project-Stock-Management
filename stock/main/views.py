@@ -796,7 +796,15 @@ def stock_detail(request, stock_code):
 
     market_cap = pe = yld = None
 
-    stock_name, current_price = get_basic_name_price(code)
+    #stock_name, current_price = get_basic_name_price(code)
+
+    stock_name = None
+    current_price = None
+    try:
+        stock_name, current_price = get_basic_name_price(code)
+    except Exception as e:
+        print(f"[TWSE] get_basic_name_price 失敗 {code}: {e}")
+
 
     snap = (StockSnapshot.objects
             .filter(code=code)
@@ -818,9 +826,10 @@ def stock_detail(request, stock_code):
             need_metrics = True
     else:
         # ========= 這段是「往回找最近一筆日線資料」的地方 =========
+        '''
         base_start = "2025-01-01"
         today = dt.date.today()
-
+        
         df = None
         for offset in range(0, 5):  # 今天、往回 1 天、2 天… 最多找 5 天
             end_date = (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
@@ -829,6 +838,24 @@ def stock_detail(request, stock_code):
                 start_date=base_start,
                 end_date=end_date,
             )
+        if df is None or df.empty:
+            return render(request, "search_not_found.html", {"query": code})
+        '''
+        base_start = "2025-01-01"
+        today = dt.date.today()
+
+        df = None
+        for offset in range(0, 5):
+            end_date = (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
+            tmp = api.taiwan_stock_daily(
+                stock_id=code,
+                start_date=base_start,
+                end_date=end_date,
+            )
+            if tmp is not None and not tmp.empty:
+                df = tmp
+                break     # 找到最近一筆有資料的日線就跳出
+
         if df is None or df.empty:
             return render(request, "search_not_found.html", {"query": code})
 
