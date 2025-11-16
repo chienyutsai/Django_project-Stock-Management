@@ -23,14 +23,14 @@ from decouple import config
 from django.http import Http404
 import pandas as pd
 from django.contrib import messages
-from .models import Watchlist, BuyRecord, Post, Comment
+from .models import Watchlist, BuyRecord, Post, Comment, CommentLike, PostLike
 from decimal import Decimal
 from django.utils import timezone
 from main.models import StockSnapshot
 import datetime as dt
 import difflib
 import unicodedata
-from django.db.models import Max, Q, OuterRef, Subquery, Value, DateTimeField, F
+from django.db.models import Max, Q, OuterRef, Subquery, Value, DateTimeField, F, Count 
 from django.db.models.functions import Coalesce
 from django.db import transaction
 from django.views.decorators.http import require_POST
@@ -842,21 +842,7 @@ def stock_detail(request, stock_code):
  
     else:
         # ========= 這段是「往回找最近一筆日線資料」的地方 =========
-        '''
-        base_start = "2025-01-01"
-        today = dt.date.today()
-        
-        df = None
-        for offset in range(0, 5):  # 今天、往回 1 天、2 天… 最多找 5 天
-            end_date = (today - dt.timedelta(days=offset)).strftime("%Y-%m-%d")
-            df = api.taiwan_stock_daily(
-                stock_id=code,
-                start_date=base_start,
-                end_date=end_date,
-            )
-        if df is None or df.empty:
-            return render(request, "search_not_found.html", {"query": code})
-        '''
+  
         base_start = "2025-01-01"
         today = dt.date.today()
 
@@ -885,16 +871,7 @@ def stock_detail(request, stock_code):
         fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='收盤價'))
         fig.update_layout(title=f'{code} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
         chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
-    '''
-    if need_metrics:
-        inputs = fetch_inputs_finmind_twse(code, price=current_price, token=token)
-        metrics = compute_metrics(inputs)
-        market_cap = metrics["市值"]
-        pe = metrics["本益比"]
-        yld = metrics["股息殖利率"]
-        StockSnapshot.save_snapshot(code, stock_name, current_price, inputs, {
-            "市值": market_cap, "本益比": pe, "股息殖利率": yld
-        })'''
+  
 
     if need_metrics:
         try:
@@ -945,16 +922,6 @@ def stock_detail(request, stock_code):
         "股息殖利率": metrics["股息殖利率"], # ← 用字串版
     }
         
-    
-    '''
-    stock = {
-        "名稱": stock_name or "",
-        "代碼": code,
-        "目前價格": current_price,
-        "市值": market_cap,
-        "本益比": pe,
-        "股息殖利率": yld,
-    }'''
 
     in_watchlist = False
     has_trades   = False
@@ -1389,55 +1356,6 @@ def news_list(request):
 
 
 
-'''
-def news_list(request):
-    api_key = config("GNEWS_API_KEY")
-    url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&token={api_key}&max=20&lang=zh"
-
-
-    # url = f"https://gnews.io/api/v4/top-headlines?country=tw&topic=business&q=股票&token={api_key}&max=20&lang=zh"
-    
-    news = []
-    seen_titles = set()  # 用標題去重
-
-    try:
-        response = requests.get(url)
-
-        print("GNEWS STATUS:", response.status_code)
-        print("GNEWS RAW:", response.text)
-
-        data = response.json()
-
-        #RSS
-        if not data.get("articles"):  # GNews沒回新聞
-            print("⚠️ GNews 無資料，改用 Google News RSS 備援")
-            feed = feedparser.parse("https://news.google.com/rss/search?q=股票&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
-            for item in feed.entries[:20]:
-                title = item.title
-                if title not in seen_titles:
-                    news.append({
-                        "title": title,
-                        "url": item.link,
-                        "date": item.published[:10]
-                    })
-                    seen_titles.add(title)
-
-        else:
-            for item in data.get("articles", []):
-                title = item["title"]
-                if title not in seen_titles:
-                    news.append({
-                        "title": title,
-                        "url": item["url"],
-                        "date": item["publishedAt"][:10]
-                    })
-                    seen_titles.add(title)
-    except Exception as e:
-        print("GNews API error:", e)
-
-    return render(request, "news.html", {"news": news})
-'''
-
 # 討論區
 
 def forum_list(request):
@@ -1466,29 +1384,68 @@ def forum_new(request):
 
 
 def forum_post(request, post_id):
+    # 先抓貼文
     post = get_object_or_404(Post, id=post_id)
-    comments = post.comments.all().order_by("created_at")
 
-    if request.method == "POST":
-        content = request.POST.get("content")
-        if content and request.user.is_authenticated:
-            Comment.objects.create(
-                post=post,
-                author=request.user,
-                content=content,
-                created_at=timezone.now(),
-            )
-            return redirect("forum_post", post_id=post.id)
+    # 留言：維持你原本的寫法（有 likes_count）
+    comments = (
+        post.comments
+            .all()
+            .annotate(likes_count=Count("likes"))
+            .order_by("created_at")
+    )
 
+    # 目前登入者 id（沒有登入就會是 None）
+    user_id = request.user.id if request.user.is_authenticated else None
+
+    # ========= 1. 處理「留言」的 liked_by_user =========
+    liked_comment_ids = set()
+    if user_id:
+        liked_comment_ids = set(
+            CommentLike.objects
+                .filter(user_id=user_id, comment__post=post)
+                .values_list("comment_id", flat=True)
+        )
+
+    for c in comments:
+        c.liked_by_user = c.id in liked_comment_ids
+
+    # ========= 2. 處理「貼文本身」的 liked_by_user & likes_count =========
+    # 貼文總讚數
+    post.likes_count = PostLike.objects.filter(post=post).count()
+
+    # 這個使用者有沒有按過這篇貼文的讚
+    if user_id:
+        post.liked_by_user = PostLike.objects.filter(
+            post=post,
+            user_id=user_id,
+        ).exists()
+    else:
+        post.liked_by_user = False
+
+    # ========= 3. 回傳給模板 =========
     return render(
         request,
         "forum_post.html",
         {
             "post": post,
             "comments": comments,
-            "user_id": request.user.id if request.user.is_authenticated else None,
+            "user_id": user_id,
         },
     )
+
+@login_required
+def toggle_post_like(request, post_id):
+    post = get_object_or_404(Post, id=post_id)
+    like, created = PostLike.objects.get_or_create(
+        user=request.user,
+        post=post,
+    )
+    if not created:
+        # 已經按過讚 → 這次就視為「取消讚」
+        like.delete()
+
+    return redirect("forum_post", post_id=post_id)
 
 
 # 刪除貼文
@@ -1527,4 +1484,17 @@ def comment_delete(request, post_id, comment_id):
         comment.delete()
     return redirect("forum_post", post_id=post_id)
 
+
+@login_required
+def toggle_comment_like(request, post_id, comment_id):
+    comment = get_object_or_404(Comment, id=comment_id, post_id=post_id)
+    like, created = CommentLike.objects.get_or_create(
+        user=request.user,
+        comment=comment,
+    )
+    if not created:
+        # 已經按過讚 → 這次就視為「取消讚」
+        like.delete()
+
+    return redirect("forum_post", post_id=post_id)
 

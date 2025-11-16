@@ -44,6 +44,18 @@ class Post(models.Model):
 
     def __str__(self):
         return self.title
+    
+
+class PostLike(models.Model):
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="likes")
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("post", "user")   # 同一使用者不可重複按讚
+
+    def __str__(self):
+        return f"{self.user.username} → {self.post.title}"
 
 
 class Comment(models.Model):
@@ -54,6 +66,22 @@ class Comment(models.Model):
 
     def __str__(self):
         return f"Comment by {self.author.username}"
+    
+
+class CommentLike(models.Model):
+    comment = models.ForeignKey(
+        Comment,
+        related_name="likes",
+        on_delete=models.CASCADE,
+    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("comment", "user")  # 一個人對同一則留言只能有一個讚
+
+    def __str__(self):
+        return f"{self.user.username} → Comment {self.comment_id}"
     
 
 from django.utils import timezone

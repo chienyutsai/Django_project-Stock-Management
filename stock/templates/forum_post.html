@@ -7,6 +7,7 @@
     <div class="card mb-4">
         <div class="card-header bg-primary text-white">
             <h5 class="mb-0">{{ post.title }}</h5>
+            
         </div>
         <div class="card-body">
             <p class="mb-2">股票代碼：{{ post.stock_code }}</p>
@@ -14,23 +15,100 @@
 
             <div class="d-flex justify-content-between align-items-center">
             <small class="text-muted">發文者：{{ post.author.username }}｜時間：{{ post.created_at }}</small>
+            
+            <div class="d-flex align-items-center justify-content-end gap-2">
 
-            {% if user_id == post.author.id %}
-            <form method="POST" action="/forum/delete/{{ post.id }}/" style="position: relative; top: -5px;">
-                {% csrf_token %}
-                <button class="btn btn-sm btn-danger">刪除貼文</button>
-            </form>
-            {% endif %}
+                <!-- 按讚按鈕 -->
+                <div>
+                    {% if user_id %}
+                        <form method="POST" action="/forum/{{ post.id }}/like/" class="d-inline">
+                            {% csrf_token %}
+                            {% if post.liked_by_user %}
+                                            <button class="btn btn-sm btn-primary">
+                                                取消讚 ({{ post.likes_count }})
+                                            </button>
+                                        {% else %}
+                                            <button class="btn btn-sm btn-outline-primary">
+                                                👍🏻 讚 ({{ post.likes_count }})
+                                            </button>
+                                        {% endif %}
+                                    </form>
+                                {% else %}
+                                    <span class="text-muted small">
+                                        👍🏻 {{ post.likes_count }}
+                                    </span>
+                            {% endif %}
+                </div>
+
+                <!-- 刪除貼文按鈕（原作者） -->
+                {% if user_id == post.author.id %}
+                    <form method="POST" action="/forum/delete/{{ post.id }}/" class="d-inline">
+                        {% csrf_token %}
+                        <button class="btn btn-sm btn-danger">
+                            刪除貼文
+                        </button>
+                    </form>
+                {% endif %}
             </div>
         </div>
     </div>
+</div>
 
     <!-- 留言區 -->
     <div class="card mb-4">
         <div class="card-header bg-secondary text-white">留言</div>
-        <div class="card-body">
-            {% if comments %}
+            <div class="card-body">
+                {% if comments %}
+
                 {% for comment in comments %}
+                    <div class="border-bottom mb-3 pb-2">
+                        <p>{{ comment.content }}</p>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                留言者：{{ comment.author.username }}｜時間：{{ comment.created_at }}
+                            </small>
+
+                            <!-- 右邊按鈕群組 -->
+                            <div class="d-flex align-items-center gap-2">
+                                {# 按讚區 #}
+                                {% if user_id %}
+                                    <form method="POST"
+                                        action="/forum/{{ post.id }}/comment/{{ comment.id }}/like/"
+                                        class="mb-0">
+                                        {% csrf_token %}
+                                        {% if comment.liked_by_user %}
+                                            <button class="btn btn-sm btn-primary">
+                                                取消讚 ({{ comment.likes_count }})
+                                            </button>
+                                        {% else %}
+                                            <button class="btn btn-sm btn-outline-primary">
+                                                👍🏻 讚 ({{ comment.likes_count }})
+                                            </button>
+                                        {% endif %}
+                                    </form>
+                                {% else %}
+                                    <span class="text-muted small">
+                                        👍🏻 {{ comment.likes_count }}
+                                    </span>
+                                {% endif %}
+
+                                {# 刪除留言：留言者本人或原 PO 可以刪 #}
+                                {% if user_id and user_id == comment.author.id or user_id == post.author.id %}
+                                    <form method="POST"
+                                        action="/forum/{{ post.id }}/comment/{{ comment.id }}/delete/"
+                                        class="mb-0">
+                                        {% csrf_token %}
+                                        <button class="btn btn-sm btn-outline-danger">
+                                            刪除留言
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+            <!--{% for comment in comments %}
                 <div class="border-bottom mb-3 pb-2">
                     <p>{{ comment.content }}</p>
 
@@ -44,7 +122,7 @@
                         {% endif %}
                     </div>
                 </div>
-                {% endfor %}
+                {% endfor %}-->
             {% else %}
                 <p class="text-muted">尚無留言。</p>
             {% endif %}

@@ -25,7 +25,22 @@ urlpatterns = [
     path("forum/", views.forum_list, name="forum_list"),
     path("forum/new/", views.forum_new, name="forum_new"),
     path("forum/<int:post_id>/", views.forum_post, name="forum_post"),
+    path(
+        "forum/<int:post_id>/like/",
+         views.toggle_post_like,
+         name="toggle_post_like"
+         ),
     path("forum/delete/<int:post_id>/", views.forum_delete, name="forum_delete"),
     path("forum/<int:post_id>/comment/", views.add_comment, name="add_comment"),
-    path("forum/<int:post_id>/comment/<int:comment_id>/delete/", views.comment_delete, name="comment_delete"),
+    #path("forum/<int:post_id>/comment/<int:comment_id>/delete/", views.comment_delete, name="comment_delete"),
+    path(
+        "forum/<int:post_id>/comment/<int:comment_id>/delete/",
+        views.comment_delete,
+        name="comment_delete",
+    ),
+    path(
+        "forum/<int:post_id>/comment/<int:comment_id>/like/",
+        views.toggle_comment_like,
+        name="toggle_comment_like",
+    ),
 ]
