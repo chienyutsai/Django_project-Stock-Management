@@ -6,6 +6,17 @@
 
     <form method="POST">
         {% csrf_token %}
+
+         <!-- 分類 -->
+        <div class="mb-3">
+            <label for="category" class="form-label">分類</label>
+            <select name="category" id="category" class="form-select">
+                <option value="share">分享</option>
+                <option value="analysis">分析</option>
+                <option value="qa">問答</option>
+            </select>
+        </div>
+
         <div class="mb-3">
             <label class="form-label">貼文標題</label>
             <input type="text" name="title" class="form-control" required>

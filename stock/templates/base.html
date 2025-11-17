@@ -38,10 +38,22 @@
             box-shadow: none !important;
         }
 
-         .drag-handle { cursor: grab; }
+        .drag-handle { cursor: grab; }
         .drag-handle:active { cursor: grabbing; }
         .noselect { user-select: none; -webkit-user-select: none; -moz-user-select: none; }
         #watchlist-body tr.dragging { opacity: .5; }
+
+        .category-badge {
+        font-size: 0.9rem;
+        padding-top: 6px !important;
+        padding-bottom: 6px !important;
+    }
+
+
+        .category-btn {
+        min-width: 55px;  /* 每顆按鈕不會過窄 */
+        text-align: center;
+    }
 
     </style>
 </head>

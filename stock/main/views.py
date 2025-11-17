@@ -1359,11 +1359,31 @@ def news_list(request):
 # 討論區
 
 def forum_list(request):
+    # 取得搜尋關鍵字（沒有就給空字串）
+    q = request.GET.get("q", "").strip()
+
+    category = request.GET.get("category")
+
+    # 先拿到基礎 queryset
+    base_qs = Post.objects.all()
+
+    if category in ["share", "analysis", "qa"]:
+        base_qs = base_qs.filter(category=category)
+
+    # 如果有搜尋關鍵字，就用 title / content / stock_code 模糊查詢
+    if q:
+        base_qs = base_qs.filter(
+            Q(title__icontains=q) |
+            Q(content__icontains=q) |
+            Q(stock_code__icontains=q)
+        )
+
+    # 在最後統一 annotate 出按讚數 & 留言數，再照時間排序
     posts = (
-        Post.objects
+        base_qs
         .annotate(
-            likes_count=Count("likes", distinct=True),      # 貼文被按讚次數
-            comments_count=Count("comments", distinct=True) # 留言數
+            likes_count=Count("likes", distinct=True),
+            comments_count=Count("comments", distinct=True),
         )
         .order_by("-created_at")
     )
@@ -1372,8 +1392,9 @@ def forum_list(request):
         request,
         "forum.html",
         {
-            "title": "討論區",
             "posts": posts,
+            "q": q,   # 回傳給模板，讓搜尋框可以保留剛剛輸入的字
+            "category": category, # 給模板判斷哪個 tab 要亮起
         },
     )
 
@@ -1386,11 +1407,14 @@ def forum_new(request):
         title = request.POST["title"]
         stock_code = request.POST["stock_code"]
         content = request.POST["content"]
+        # ⬇ 新增：分類
+        category = request.POST.get("category", "share")
 
         Post.objects.create(
             title=title,
             stock_code=stock_code,
             content=content,
+            category=category,      # ⬅ 把分類存進去
             author=request.user,
             created_at=timezone.now(),
         )

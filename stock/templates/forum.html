@@ -3,8 +3,45 @@
 {% block content %}
 <div class="container mt-1">
     <h3 class="mb-4">討論區</h3>
-    <!-- 發表貼文按鈕 -->
-    <a href="/forum/new" class="btn btn-primary mb-3">發表新貼文</a>
+    <div class="d-flex justify-content-between align-items-center mb-3">
+
+        <!-- 左邊：發表新貼文 + 篩選標籤 -->
+        
+            
+                <a href="/forum/new/" class="btn btn-primary">發表新貼文</a>
+            <div class="d-flex align-items-center">
+                <div class="d-flex ms-3" style="width: 220px;">
+                    <div class="btn-group ms-3 " role="group" aria-label="分類篩選">
+                        <a href="/forum/" class="btn btn-sm btn-outline-secondary {% if not category %}active{% endif %}">
+                            全部
+                        </a>
+                        <a href="/forum/?category=share" class="btn btn-sm btn-outline-secondary {% if category == 'share' %}active{% endif %}">
+                            分享
+                        </a>
+                        <a href="/forum/?category=analysis" class="btn btn-sm btn-outline-secondary {% if category == 'analysis' %}active{% endif %}">
+                            分析
+                        </a>
+                        <a href="/forum/?category=qa" class="btn btn-sm btn-outline-secondary {% if category == 'qa' %}active{% endif %}">
+                            問答
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 右邊：搜尋貼文 -->
+                <form method="get" action="/forum/" class="d-flex ms-3 flex-grow-1 w-100" style="max-width: 275px;">
+                    <div class="input-group">
+                        <input type="text"
+                            name="q"
+                            class="form-control"
+                            placeholder="搜尋貼文標題 / 內容 / 代碼"
+                            value="{{ q|default:'' }}">
+                        <button class="btn btn-outline-secondary" type="submit">
+                            搜尋
+                        </button>
+                    </div>
+                </form>
+        </div>
+    </div>
     <!-- 貼文列表 -->
     {% if posts %}
     <div class="list-group">
@@ -12,9 +49,27 @@
         <div class="list-group-item">
             <div class="d-flex justify-content-between align-items-center">
                 <div>
-                    <h5>{{ post.title }}</h5>
+                    <!--<h5>{{ post.title }}</h5>-->
+                    <!--<h5 class="mb-1">
+                        {% if post.category %}
+                            <span class="badge bg-secondary me-2">
+                                {% if post.category == "share" %}分享{% elif post.category == "analysis" %}分析{% elif post.category == "qa" %}問答{% endif %}
+                            </span>
+                        {% endif %}
+                        {{ post.title }}
+                    </h5>-->
+                    <!-- 標題 + 分類 -->
+                    <div class="d-flex align-items-center mt-2 mb-2">
+                        {% if post.category %}
+                            <span class="badge bg-secondary me-2 px-3 py-2 category-badge">
+                                {{ post.get_category_display }}
+                            </span>
+                        {% endif %}
+                        <h5 class="mb-0 ">{{ post.title }}</h5>
+                    </div>
+
                         <p class="mb-1">股票代碼：{{ post.stock_code }}</p> 
-                        <div class="d-flex justify-content-between mt-1">
+                        <div class="d-flex justify-content-between align-items-center mt-1">
                             <small class="text-muted">作者：{{ post.author.username }}｜發表於 {{ post.created_at }}　</small>
                     
                             <div class="text-black small text-end">
@@ -24,11 +79,11 @@
                             </div>
                         </div>
                 </div>
-                <div class="d-flex align-items-center mt-2">
-                    <a href="/forum/{{ post.id }}/" class="btn btn-outline-primary mb-2">
-                        查看
-                    </a>
-                </div>
+                    <div class="d-flex align-items-center mt-2">
+                        <a href="/forum/{{ post.id }}/" class="btn btn-outline-primary mb-2">
+                            查看
+                        </a>
+                    </div>
                 <!--<a href="/forum/{{ post.id }}" class="btn btn-sm btn-outline-primary">查看</a>-->
             </div>
         </div>

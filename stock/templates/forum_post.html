@@ -6,7 +6,17 @@
     <!-- 貼文內容 -->
     <div class="card mb-4">
         <div class="card-header bg-primary text-white">
-            <h5 class="mb-0">{{ post.title }}</h5>
+            <!--<h5 class="mb-0">{{ post.title }}</h5>-->
+            <h5 class="mb-0">
+            <div class="d-flex align-items-center">
+            {% if post.category %}
+                <span class="badge bg-light text-primary me-2">
+                    {% if post.category == "share" %}分享{% elif post.category == "analysis" %}分析{% elif post.category == "qa" %}問答{% endif %}
+                </span>
+            {% endif %}
+            {{ post.title }}
+            </div>
+        </h5>
             
         </div>
         <div class="card-body">
@@ -42,7 +52,7 @@
 
                 <!-- 刪除貼文按鈕（原作者） -->
                 {% if user_id == post.author.id %}
-                    <form method="POST" action="/forum/delete/{{ post.id }}/" class="d-inline">
+                    <form method="POST" action="/forum/delete/{{ post.id }}/" class="d-inline" onsubmit="return confirm('確定要刪除這篇貼文嗎？刪除後將無法復原。');">
                         {% csrf_token %}
                         <button class="btn btn-sm btn-danger">
                             刪除貼文
@@ -97,7 +107,8 @@
                                 {% if user_id and user_id == comment.author.id or user_id == post.author.id %}
                                     <form method="POST"
                                         action="/forum/{{ post.id }}/comment/{{ comment.id }}/delete/"
-                                        class="mb-0">
+                                        class="mb-0"
+                                        onsubmit="return confirm('確定要刪除這則留言嗎？刪除後將無法復原。');">
                                         {% csrf_token %}
                                         <button class="btn btn-sm btn-outline-danger">
                                             刪除留言
