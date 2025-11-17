@@ -1359,8 +1359,23 @@ def news_list(request):
 # 討論區
 
 def forum_list(request):
-    posts = Post.objects.all().order_by("-created_at")
-    return render(request, "forum.html", {"posts": posts})
+    posts = (
+        Post.objects
+        .annotate(
+            likes_count=Count("likes", distinct=True),      # 貼文被按讚次數
+            comments_count=Count("comments", distinct=True) # 留言數
+        )
+        .order_by("-created_at")
+    )
+
+    return render(
+        request,
+        "forum.html",
+        {
+            "title": "討論區",
+            "posts": posts,
+        },
+    )
 
 
 # 發布貼文
