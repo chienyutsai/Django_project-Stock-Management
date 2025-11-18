@@ -24,7 +24,16 @@
                     {% for key, value in stock.items %}
                     <tr>
                         <th>{{ key }}</th>
-                        <td>{{ value|default:"無資料" }}</td>
+                        <td>{{ value|default:"無資料" }}
+                            {% if is_foreign %}
+                            {% if key == "目前價格" and value != "無資料" %}
+                                USD
+                            {% endif %}
+                            {% if key == "市值" and value != "無資料" and value != "--" %}
+                                USD
+                            {% endif %}
+                        {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

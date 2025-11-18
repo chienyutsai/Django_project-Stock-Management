@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 GNEWS_API_KEY = config("GNEWS_API_KEY")
 FINMIND_TOKEN = config("FINMIND_TOKEN", default="")
 TWELVE_DATA_API_KEY = config("TWELVE_DATA_API_KEY")
+FINNHUB_API_KEY =config("FINNHUB_API_KEY")
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/

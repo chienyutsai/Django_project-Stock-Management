@@ -270,32 +270,6 @@ def get_market_data():
     return market_data
 
 # 搜尋股票
-'''
-def search_stock(request):
-    query = request.GET.get("query", "").strip()
-    if not query:
-        return redirect("/")
-
-    api = DataLoader()
-    token = config("FINMIND_TOKEN")
-    api.login_by_token(token)
-
-    # 嘗試用 query 當股票代碼抓資料
-    try:
-        df = api.taiwan_stock_daily(stock_id=query, start_date="2025-01-01", end_date=str(datetime.date.today()))
-        if df is not None and not df.empty:
-            stock = {
-                "名稱": df["stock_id"].iloc[0],  # 可改成對應名稱
-                "代碼": query,
-                "目前價格": df["close"].iloc[-1]
-            }
-            return redirect(f"/stock_detail/{stock['代碼']}/")
-    except Exception as e:
-        print("API error:", e)
-
-    # 查不到股票
-    return render(request, "search_not_found.html", {"query": query})
-'''
 
 def _fetch_foreign_quote(symbol: str):
     """
@@ -425,8 +399,11 @@ def _twelve_symbol_search(q: str):
 # 股票細節
 CACHE_TTL = timedelta(hours=1)
 
+'''
 def get_current_price_now(stock_code: str) -> float:
-    code = str(stock_code)
+    code = str(stock_code).strip()
+
+    # 1. 先看快取 Snapshot（台股 / 外股都共用）
     snap = (StockSnapshot.objects
             .filter(code=code)
             .order_by("-created_at")
@@ -434,6 +411,33 @@ def get_current_price_now(stock_code: str) -> float:
     if snap and timezone.now() - snap.created_at <= CACHE_TTL:
         return float(snap.price)
 
+    # 2. 非純數字 → 視為外國股票，用 Twelve Data / Alpha Vantage 抓價錢
+    if not code.isdigit():
+        price = None
+
+        # 2-1. 優先用 Twelve Data 的 quote（你前面已經在用） 
+        q = _fetch_foreign_quote(code)   # 會回 {'symbol', 'name', 'price'} 或 None
+        if q and q.get("price") is not None:
+            price = float(q["price"])
+
+        # 2-2. 備援：Alpha Vantage GLOBAL_QUOTE
+        if price is None:
+            av_key = os.getenv("ALPHAVANTAGE_API_KEY") or getattr(settings, "ALPHAVANTAGE_API_KEY", "")
+            if av_key:
+                p = fetch_us_price(code, av_key)
+                if p is not None:
+                    price = float(p)
+
+        if price is not None:
+            # 這裡可以選擇要不要寫回 Snapshot，先簡單直接回傳就好
+            return price
+
+        # 2-3. 還是沒有價錢 → 退回舊 snapshot（即使過期），再不行就丟 404
+        if snap:
+            return float(snap.price)
+        raise Http404("抓不到當前股價")
+
+    # 3. 走到這裡就是「台股（純數字）」→ 保留原本 FinMind 的流程
     api = DataLoader()
     token = settings.FINMIND_TOKEN
     api.login_by_token(token)
@@ -444,7 +448,7 @@ def get_current_price_now(stock_code: str) -> float:
         end_date=str(dt.date.today())
     )
     if df is None or df.empty:
-    # 退回最近一筆 snapshot 價格，不丟 404
+        # 退回最近一筆 snapshot 價格，不丟 404
         snap = (StockSnapshot.objects
                 .filter(code=code)
                 .order_by("-created_at")
@@ -464,6 +468,80 @@ def get_current_price_now(stock_code: str) -> float:
     inputs = fetch_inputs_finmind_twse(code, price=price, token=token)
     metrics = compute_metrics(inputs)
     StockSnapshot.save_snapshot(code, stock_name, price, inputs, metrics)
+
+    return price
+'''
+
+def get_current_price_now(stock_code: str) -> float:
+    """
+    取得「目前股價」：
+    - 台股（純數字）：用 FinMind + StockSnapshot 快取
+    - 外國股票（非純數字，含美股）：用 Finnhub
+    """
+    code = str(stock_code).strip()
+
+    # ========= 1) 外國股票（非純數字）→ 用 Finnhub =========
+    if not code.isdigit():
+        data = fetch_foreign_fundamentals_finnhub(code)  # 你已經實作好的 Finnhub 函式
+        price = data.get("price")
+
+        if price is not None:
+            return float(price)
+
+        # Finnhub 拿不到，就退回最近一筆 snapshot（如果有）
+        snap = (StockSnapshot.objects
+                .filter(code=code)
+                .order_by("-created_at")
+                .first())
+        if snap:
+            return float(snap.price)
+
+        # 真的完全沒資料
+        raise Http404("抓不到當前股價")
+
+    # ========= 2) 台股（純數字）→ 原本 FinMind 流程 =========
+    snap = (StockSnapshot.objects
+            .filter(code=code)
+            .order_by("-created_at")
+            .first())
+
+    # 快取還沒過期就用快取
+    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
+        return float(snap.price)
+
+    api = DataLoader()
+    token = settings.FINMIND_TOKEN
+    api.login_by_token(token)
+
+    df = api.taiwan_stock_daily(
+        stock_id=code,
+        start_date=(dt.date.today() - dt.timedelta(days=30)).strftime("%Y-%m-%d"),
+        end_date=str(dt.date.today()),
+    )
+    if df is None or df.empty:
+        # 退回最近一筆 snapshot，不丟 404
+        snap = (StockSnapshot.objects
+                .filter(code=code)
+                .order_by("-created_at")
+                .first())
+        if snap:
+            return float(snap.price)
+        raise Http404("抓不到當前股價")
+
+    price = float(df["close"].iloc[-1])
+
+    # 取得名稱
+    info = api.taiwan_stock_info()
+    name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
+    stock_name = name_arr[0] if len(name_arr) else code
+
+    # 更新一次快取
+    try:
+        inputs = fetch_inputs_finmind_twse(code, price=price, token=token)
+        metrics = compute_metrics(inputs) if inputs is not None else {}
+        StockSnapshot.save_snapshot(code, stock_name, price, inputs, metrics)
+    except Exception as e:
+        print(f"[TWSE] 更新 snapshot 失敗 {code}: {e}")
 
     return price
 
@@ -534,6 +612,86 @@ def fetch_us_series_30(symbol: str, av_key: str):
     except Exception:
         return []
 
+
+def fetch_foreign_fundamentals_finnhub(symbol: str) -> dict:
+    """
+    使用 Finnhub 抓國外股票（例如美股）的基本資料：
+
+    回傳：
+    {
+        "symbol": "NVDA",
+        "name": "NVIDIA Corporation",
+        "price": 181.11,          # 最新價 (USD)
+        "market_cap": 1234.56,    # 市值 (billion USD)
+        "pe": 35.4,               # 本益比
+        "dividend_yield": 0.56,   # 殖利率，百分比 (%)
+    }
+    """
+    api_key = getattr(settings, "FINNHUB_API_KEY", None)
+    if not api_key:
+        return {
+            "symbol": symbol.upper(),
+            "name": symbol.upper(),
+            "price": None,
+            "market_cap": None,
+            "pe": None,
+            "dividend_yield": None,
+        }
+
+    base = "https://finnhub.io/api/v1"
+    sym = symbol.upper()
+
+    out = {
+        "symbol": sym,
+        "name": sym,
+        "price": None,
+        "market_cap": None,
+        "pe": None,
+        "dividend_yield": None,
+    }
+
+    # 1) 公司基本資料（名稱、市值）
+    try:
+        prof = requests.get(
+            f"{base}/stock/profile2",
+            params={"symbol": sym, "token": api_key},
+            timeout=8,
+        ).json()
+        if prof:
+            out["name"] = prof.get("name") or prof.get("ticker") or sym
+            # Finnhub 的 marketCapitalization 單位是「十億美元（billion USD）」
+            out["market_cap"] = prof.get("marketCapitalization")
+    except Exception:
+        pass
+
+    # 2) 財務指標（PE、殖利率）
+    try:
+        met = requests.get(
+            f"{base}/stock/metric",
+            params={"symbol": sym, "metric": "all", "token": api_key},
+            timeout=8,
+        ).json()
+        d = met.get("metric", {}) or {}
+        out["pe"] = d.get("peBasicExclExtraTTM") or d.get("peTTM")
+        dy = d.get("dividendYieldTTM") or d.get("dividendYieldIndicatedAnnual")
+        if dy is not None:
+            out["dividend_yield"] = dy * 100  # 轉百分比 %
+    except Exception:
+        pass
+
+    # 3) 最新價格
+    try:
+        q = requests.get(
+            f"{base}/quote",
+            params={"symbol": sym, "token": api_key},
+            timeout=8,
+        ).json()
+        if isinstance(q, dict):
+            out["price"] = q.get("c")  # c = current price
+    except Exception:
+        pass
+
+    return out
 
 
 
@@ -648,90 +806,68 @@ def format_big_number(n):
 def stock_detail(request, stock_code):
     code = str(stock_code).strip()
 
-    ''' 
-    # ===== 外國股票（非純數字）→ 統一大寫 =====
-
+    # ===== 國外股票（非純數字）→ Finnhub =====
     if not code.isdigit():
         sym = code.upper()
-        f = fetch_foreign_fundamentals(sym)     # ← 這裡
-        if (f.get("price") is None) and (f.get("market_cap") is None) and (f.get("pe") is None):
-            # 幾乎沒拿到任何資料 → 視為查無
+
+        # 1) 取得基本資料
+        f = fetch_foreign_fundamentals_finnhub(sym)
+
+        # 如果全部都是 None，就當作查無此股
+        if (
+            f.get("price") is None
+            and f.get("market_cap") is None
+            and f.get("pe") is None
+            and f.get("dividend_yield") is None
+        ):
             return render(request, "search_not_found.html", {"query": sym})
 
-        # 走勢圖（30 天）：可繼續用 Twelve Data 的 time_series 畫「折線圖」統一風格
+        # 2) 近 30 天走勢圖（用 Finnhub /stock/candle）
+
         chart = None
-        td_key = os.getenv("TWELVE_DATA_API_KEY") or getattr(settings, "TWELVE_DATA_API_KEY", "")
         try:
-            if td_key:
-                rr = requests.get(
-                    "https://api.twelvedata.com/time_series",
-                    params={"symbol": sym, "interval": "1day", "outputsize": 60, "apikey": td_key, "format": "JSON"},
-                    timeout=12
+            ts = _fetch_foreign_timeseries(sym, days=30)
+            if ts is not None:
+                dates, closes = ts
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=dates, y=closes, mode="lines", name="收盤價"
+                ))
+                fig.update_layout(
+                    title=f"{sym} 近 30 天股價",
+                    xaxis_title="日期",
+                    yaxis_title="價格",
                 )
-                jj = rr.json() if rr.ok else {}
-                series = jj.get("values") or jj.get("data") or []
-                if series:
-                    # 轉成時間順序（API 回傳通常是新到舊）
-                    xs = [row["datetime"] for row in reversed(series)]
-                    ys = [float(row["close"]) for row in reversed(series)]
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=xs, y=ys, mode='lines', name='收盤價'))
-                    fig.update_layout(title=f'{sym} 近 30 天股價', xaxis_title='日期', yaxis_title='價格')
-                    chart = fig.to_html(include_plotlyjs='cdn', full_html=False)
+                chart = fig.to_html(include_plotlyjs="cdn", full_html=False)
         except Exception:
             chart = None
+            
 
-        # 讓模板使用同一組欄位（跟台股一致）
-        # 先從 metrics 拿（如果這次有重算）
-        disp_mkt = None
-        disp_pe = None
-        disp_yld = None
+        # 3) 把數字轉成顯示字串（市值用「多少 B USD」）
+        mkt_display = "--"
+        if f.get("market_cap") is not None:
+            mkt_display = f"{f['market_cap']:.2f} B"  # billion USD
 
-        if metrics is not None:
-            disp_mkt = metrics.get("市值")
-            disp_pe = metrics.get("本益比")
-            disp_yld = metrics.get("股息殖利率")
+        pe_display = _fmt_number(f.get("pe"))
+        yld_display = _fmt_percent(f.get("dividend_yield"))
 
-        # 如果沒有 metrics（例如命中舊的快取），就用數字再套格式化函式
-        if disp_mkt is None:
-            disp_mkt = _fmt_money(market_cap)
-
-        if disp_pe is None:
-            disp_pe = _fmt_number(pe)
-
-        if disp_yld is None:
-            disp_yld = _fmt_percent(yld)
-
-        stock = {
-            "名稱": stock_name or "",
-            "代碼": code,
-            "目前價格": current_price,
-            "市值": disp_mkt,
-            "本益比": disp_pe,
-            "股息殖利率": disp_yld,
-        }
-        
-        #
         stock = {
             "名稱": f.get("name") or sym,
             "代碼": sym,
-            "目前價格": f.get("price") if f.get("price") is not None else "無資料",
-            "市值": f.get("market_cap"),
-            "本益比": f.get("pe"),
-            "股息殖利率": f.get("dividend_yield"),
+            "目前價格": f.get("price"),
+            "市值": mkt_display,
+            "本益比": pe_display,
+            "股息殖利率": yld_display,
         }
-        #
 
         in_watchlist = False
         has_trades = False
-
         if request.user.is_authenticated:
             in_watchlist = Watchlist.objects.filter(
                 user=request.user, stock_code=sym, collected=True
             ).exists()
-
             has_trades = BuyRecord.objects.filter(
-            user=request.user, stock_code=sym
+                user=request.user, stock_code=sym
             ).exists()
 
         return render(request, "stock_detail.html", {
@@ -739,52 +875,8 @@ def stock_detail(request, stock_code):
             "chart": chart,
             "in_watchlist": in_watchlist,
             "has_trades": has_trades,
+            "is_foreign": True,   # ★ 給模板判斷是否顯示 USD
         })
-    
-
-    # ===== 外國股票（非純數字）→ 走 Alpha Vantage =====
-    if not code.isdigit():
-        sym = code.upper()
-        av_key = getattr(settings, "ALPHA_VANTAGE_API_KEY", None)  # 你已經設定好 key
-        overview = fetch_us_overview(sym, av_key) if av_key else {"name": sym, "market_cap": None, "pe": None, "dividend_yield": None}
-        price = fetch_us_price(sym, av_key) if av_key else None
-        series = fetch_us_series_30(sym, av_key) if av_key else []
-
-        # 畫「最近 30 天 折線圖」與台股統一
-        chart = None
-        if series:
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=[row["date"] for row in series],
-                y=[row["close"] for row in series],
-                mode="lines",
-                name=f"{sym} 收盤價",
-            ))
-            fig.update_layout(title=f"{sym} 近 30 天股價", xaxis_title="日期", yaxis_title="價格")
-            chart = fig.to_html(include_plotlyjs="cdn", full_html=False)
-
-        # 讓表格共用同一個模板結構
-        stock = {
-            "名稱": overview["name"],
-            "代碼": sym,
-            "目前價格": price,
-            "市值": overview["market_cap"],         # 單位：美元（你可以在模板加上顯示單位）
-            "本益比": overview["pe"],
-            "股息殖利率": overview["dividend_yield"], # 百分比數字，模板加上 % 號
-        }
-
-        in_watchlist = False
-        if request.user.is_authenticated:
-            in_watchlist = Watchlist.objects.filter(
-                user=request.user, stock_code=sym, collected=True
-            ).exists()
-
-        return render(request, "stock_detail.html", {
-            "stock": stock,
-            "chart": chart,
-            "in_watchlist": in_watchlist,
-        })
-'''
 
     # ===== 台股（純數字）→ 原本流程 =====
 
@@ -939,6 +1031,7 @@ def stock_detail(request, stock_code):
         "chart": chart,
         "in_watchlist": in_watchlist,
         "has_trades": has_trades,
+        "is_foreign": False,
     })
 
 # 自選股
