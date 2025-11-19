@@ -346,7 +346,7 @@ def _foreign_timeseries_chart(symbol: str):
     except Exception:
         return None
     
-
+'''
 def search_stock(request):
     query = (request.GET.get("query") or "").strip()
     if not query:
@@ -370,6 +370,74 @@ def search_stock(request):
 
     # c) 其他（英文字母等）→ 當外國代碼交給 stock_detail 判斷
     return redirect(f"/stock_detail/{query.upper()}/")
+'''
+
+def search_stock(request):
+    query = (request.GET.get("query") or "").strip()
+    if not query:
+        return redirect("/")
+
+    q = query.strip()
+    q_upper = q.upper()
+
+    # 1) 純數字 → 台股代碼
+    if q_upper.isdigit():
+        return redirect(f"/stock_detail/{q_upper}/")
+
+    # 2) 先試台股中文名稱搜尋
+    try:
+        api = DataLoader()
+        api.login_by_token(settings.FINMIND_TOKEN)
+        info = api.taiwan_stock_info()
+        match = info[info["stock_name"].str.contains(q, case=False, na=False)]
+        if not match.empty:
+            code = str(match.iloc[0]["stock_id"])
+            return redirect(f"/stock_detail/{code}/")
+    except Exception:
+        pass
+
+    # 3) 再試國外股票：用 Finnhub 搜尋
+    try:
+        fh_key = settings.FINNHUB_API_KEY
+        url = "https://finnhub.io/api/v1/search"
+        r = requests.get(url, params={"q": q, "token": fh_key}, timeout=5)
+        data = r.json()
+        results = data.get("result") or []
+
+        candidates = []
+        for item in results:
+            symbol = (item.get("symbol") or "").upper()
+            desc = (item.get("description") or "").upper()
+
+            # 只要「看起來像股票代碼」的：全英文＋長度不超過 5
+            if not symbol.isalpha() or len(symbol) > 5:
+                continue
+
+            # 條件一：使用者輸入剛好就是這個代碼
+            if q_upper == symbol:
+                candidates.append(symbol)
+                continue
+
+            # 條件二：描述文字裡有使用者輸入（例如 NVIDIA）
+            if q_upper in desc:
+                candidates.append(symbol)
+
+        if candidates:
+            # 優先選 4～5 個字母的代碼（例如 NVDA 優先於 NVD）
+            candidates = sorted(
+                candidates,
+                key=lambda s: (len(s) < 4, len(s))  # len>=4 排在前面
+            )
+            best = candidates[0]
+            return redirect(f"/stock_detail/{best}/")
+
+    except Exception as e:
+        print("[search_stock] Finnhub 搜尋失敗：", e)
+
+    # 4) 到這裡表示：台股沒找到、Finnhub 也沒有「像樣」的匹配 → 直接顯示查無資料
+    return render(request, "search_not_found.html", {"query": query})
+
+
 
 def _twelve_symbol_search(q: str):
     """用 Twelve Data 的 symbol_search 把公司/代碼 → 標準 symbol 與顯示名稱"""
@@ -845,8 +913,13 @@ def stock_detail(request, stock_code):
 
         # 3) 把數字轉成顯示字串（市值用「多少 B USD」）
         mkt_display = "--"
-        if f.get("market_cap") is not None:
-            mkt_display = f"{f['market_cap']:.2f} B"  # billion USD
+        mcap = f.get("market_cap")
+        if mcap is not None:
+            trillion = mcap / 1_000_000   # 因為是 million → trillion 要除以 1,000,000
+            if trillion >= 1:
+                mkt_display = f"{trillion:.2f} T"
+            else:
+                mkt_display = f"{(mcap/1000):,.2f} B"
 
         pe_display = _fmt_number(f.get("pe"))
         yld_display = _fmt_percent(f.get("dividend_yield"))
