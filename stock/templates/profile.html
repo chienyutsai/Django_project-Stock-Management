@@ -93,7 +93,8 @@
                 {% endif %}
 
                  <!-- 刪除帳號表單 -->
-                <form method="POST" action="{% url 'delete_account' %}">
+                <form method="POST" action="{% url 'delete_account' %}"
+                onsubmit="return confirm('確定要刪除帳號嗎？刪除後將無法復原。');">
                     {% csrf_token %}
                 <button class="btn btn-danger">永久刪除</button>
                 </form>

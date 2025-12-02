@@ -346,31 +346,6 @@ def _foreign_timeseries_chart(symbol: str):
     except Exception:
         return None
     
-'''
-def search_stock(request):
-    query = (request.GET.get("query") or "").strip()
-    if not query:
-        return redirect("/")
-
-    # a) 純數字 → 直接當台股代碼
-    if query.isdigit():
-        return redirect(f"/stock_detail/{query}/")
-
-    # b) 中文/關鍵字 → FinMind 對應出 stock_id
-    try:
-        api = DataLoader()
-        api.login_by_token(settings.FINMIND_TOKEN)
-        info = api.taiwan_stock_info()
-        match = info[info["stock_name"].str.contains(query, case=False, na=False)]
-        if not match.empty:
-            code = str(match.iloc[0]["stock_id"])
-            return redirect(f"/stock_detail/{code}/")
-    except Exception:
-        pass
-
-    # c) 其他（英文字母等）→ 當外國代碼交給 stock_detail 判斷
-    return redirect(f"/stock_detail/{query.upper()}/")
-'''
 
 def search_stock(request):
     query = (request.GET.get("query") or "").strip()
@@ -466,79 +441,6 @@ def _twelve_symbol_search(q: str):
 
 # 股票細節
 CACHE_TTL = timedelta(hours=1)
-
-'''
-def get_current_price_now(stock_code: str) -> float:
-    code = str(stock_code).strip()
-
-    # 1. 先看快取 Snapshot（台股 / 外股都共用）
-    snap = (StockSnapshot.objects
-            .filter(code=code)
-            .order_by("-created_at")
-            .first())
-    if snap and timezone.now() - snap.created_at <= CACHE_TTL:
-        return float(snap.price)
-
-    # 2. 非純數字 → 視為外國股票，用 Twelve Data / Alpha Vantage 抓價錢
-    if not code.isdigit():
-        price = None
-
-        # 2-1. 優先用 Twelve Data 的 quote（你前面已經在用） 
-        q = _fetch_foreign_quote(code)   # 會回 {'symbol', 'name', 'price'} 或 None
-        if q and q.get("price") is not None:
-            price = float(q["price"])
-
-        # 2-2. 備援：Alpha Vantage GLOBAL_QUOTE
-        if price is None:
-            av_key = os.getenv("ALPHAVANTAGE_API_KEY") or getattr(settings, "ALPHAVANTAGE_API_KEY", "")
-            if av_key:
-                p = fetch_us_price(code, av_key)
-                if p is not None:
-                    price = float(p)
-
-        if price is not None:
-            # 這裡可以選擇要不要寫回 Snapshot，先簡單直接回傳就好
-            return price
-
-        # 2-3. 還是沒有價錢 → 退回舊 snapshot（即使過期），再不行就丟 404
-        if snap:
-            return float(snap.price)
-        raise Http404("抓不到當前股價")
-
-    # 3. 走到這裡就是「台股（純數字）」→ 保留原本 FinMind 的流程
-    api = DataLoader()
-    token = settings.FINMIND_TOKEN
-    api.login_by_token(token)
-
-    df = api.taiwan_stock_daily(
-        stock_id=code,
-        start_date=(dt.date.today() - dt.timedelta(days=30)).strftime("%Y-%m-%d"),
-        end_date=str(dt.date.today())
-    )
-    if df is None or df.empty:
-        # 退回最近一筆 snapshot 價格，不丟 404
-        snap = (StockSnapshot.objects
-                .filter(code=code)
-                .order_by("-created_at")
-                .first())
-        if snap:
-            return float(snap.price)
-        raise Http404("抓不到當前股價")
-
-    price = float(df["close"].iloc[-1])
-
-    # 取得中文名稱（若要）
-    info = api.taiwan_stock_info()
-    name_arr = info.loc[info["stock_id"] == code, "stock_name"].values
-    stock_name = name_arr[0] if len(name_arr) else code
-
-    # 也更新一次 snapshot（含你已有的 metrics）
-    inputs = fetch_inputs_finmind_twse(code, price=price, token=token)
-    metrics = compute_metrics(inputs)
-    StockSnapshot.save_snapshot(code, stock_name, price, inputs, metrics)
-
-    return price
-'''
 
 def get_current_price_now(stock_code: str) -> float:
     """
