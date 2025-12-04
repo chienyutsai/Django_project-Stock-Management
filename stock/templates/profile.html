@@ -117,4 +117,12 @@
         showSection('account');  // 預設顯示帳號區塊
     {% endif %}
 </script>
+<script>
+    // ⭐ 讓訊息 3 秒後自動消失
+    setTimeout(() => {
+        document.querySelectorAll(".alert").forEach(msg => {
+            msg.style.display = "none";
+        });
+    }, 2500);
+</script>
 {% endblock %}

@@ -184,6 +184,7 @@ def update_password_view(request):
 
         user.set_password(new_password)
         user.save()
+        update_session_auth_hash(request, user)
         return render(request, 'profile.html', {
             'success': '密碼已更新',
             'username': user.username,
