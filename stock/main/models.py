@@ -27,7 +27,9 @@ class BuyRecord(models.Model):
         constraints = [
             # 允許正/負，僅禁止 0
             models.CheckConstraint(
-                check=~Q(quantity=0), name="buyrecord_quantity_nonzero"
+                #check=~Q(quantity=0), name="buyrecord_quantity_nonzero"
+                condition=~Q(quantity=0),        # ✅ 用 condition，關鍵字參數
+                name="buyrecord_quantity_nonzero",
             ),
         ]
 
