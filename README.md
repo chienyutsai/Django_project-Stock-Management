@@ -32,7 +32,7 @@
 
 ## 🛠️ 技術棧 (Tech Stack)
 
-本專案採用前後端分離架構開發，並整合多項資料科學與深度學習技術：
+本專案採用前後端分離架構開發，並結合資料科學與自然語言處理技術：
 
 * **Frontend (前端):** HTML5, CSS3, JavaScript, Bootstrap (響應式網頁設計), Plotly.js / Chart.js (負責K線圖、技術指標與互動式數據視覺化渲染)
 * **Backend (後端):** Python (核心開發語言), Django (MVT 架構、RESTful API、會員與業務邏輯處理)
@@ -44,7 +44,7 @@
 
 ## 🚀 本地端安裝與執行 (Installation)
 
-本專案後端基於 Django 框架開發，並整合了多個金融數據 API 與 AI 預測模型。請依照以下步驟於本地端建立開發環境：
+本專案後端基於 Django 框架開發，並整合了多個金融數據 API 與新聞情緒分析模組。請依照以下步驟於本地端建立開發環境：
 
 ### 0. 系統需求 (Prerequisites)
 
